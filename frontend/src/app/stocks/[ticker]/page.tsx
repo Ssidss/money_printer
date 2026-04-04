@@ -3,6 +3,7 @@ import { StockChart } from "@/components/stock/StockChart"
 import { VolumeProfile } from "@/components/stock/VolumeProfile"
 import { BackButton } from "@/components/stock/BackButton"
 import { AiNotes } from "@/components/stock/AiNotes"
+import { StockActions } from "@/components/stock/StockActions"
 import type { SmcData } from "@/lib/api"
 
 export const revalidate = 0
@@ -68,6 +69,9 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
               　<span className="text-slate-400">{latest.date}</span>
             </p>
           )}
+          <div className="mt-2">
+            <StockActions ticker={T} />
+          </div>
         </div>
 
         {/* 走勢機率 */}

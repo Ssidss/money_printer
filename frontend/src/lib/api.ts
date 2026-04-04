@@ -38,6 +38,12 @@ export const api = {
     get<AnalysisRow[]>(`/api/v1/stocks/${ticker}/analysis`),
   stockNews: (ticker: string) =>
     get<NewsItem[]>(`/api/v1/stocks/${ticker}/news`),
+  stockFetch: (ticker: string, days = 7) =>
+    post<{ message: string; rows_added: number }>(`/api/v1/stocks/${ticker}/fetch?days=${days}`, {}),
+  stockAnalyze: (ticker: string) =>
+    post<{ message: string }>(`/api/v1/stocks/${ticker}/analyze`, {}),
+  stockAnalyzeSync: (ticker: string) =>
+    post<StockAnalysisResult>(`/api/v1/stocks/${ticker}/analyze/sync`, {}),
 
   // Analysis
   triggerAnalysis: () => post<{ message: string }>("/api/v1/analysis/run", {}),
@@ -170,6 +176,15 @@ export type SmcData = {
   }
   key_levels: { type: "resistance" | "support"; price: number; date: string }[]
   entry_suggestion?: EntrySuggestion | null
+}
+
+export type StockAnalysisResult = {
+  ticker: string; prices_added: number; news_added: number
+  analysis: {
+    composite_score: number; technical_score: number; sentiment_score: number
+    recommendation: string; position_tier: string | null
+    smc_trend: string; catalyst: string; signals_met: number; signals: string[]
+  }
 }
 
 // AI Note Types
