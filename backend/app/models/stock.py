@@ -26,6 +26,7 @@ class Stock(Base):
     news: Mapped[list["NewsArticle"]] = relationship(back_populates="stock", cascade="all, delete-orphan")
     holdings: Mapped[list["PortfolioHolding"]] = relationship(back_populates="stock")
     transactions: Mapped[list["PortfolioTransaction"]] = relationship(back_populates="stock")
+    ai_notes: Mapped[list["AiAnalysisNote"]] = relationship(back_populates="stock", cascade="all, delete-orphan")
 
 
 class PriceHistory(Base):

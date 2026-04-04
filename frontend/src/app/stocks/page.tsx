@@ -1,5 +1,5 @@
 import { api } from "@/lib/api"
-import type { TopPick, Stock } from "@/lib/api"
+import type { TopPick, Stock, AiNoteLatest } from "@/lib/api"
 import { AddStockModal } from "@/components/stocks/AddStockModal"
 import { StocksTable } from "@/components/stocks/StocksTable"
 
@@ -8,15 +8,17 @@ export const revalidate = 0
 type MergedStock = Stock & Partial<TopPick>
 
 export default async function StocksPage() {
-  const [stocksData, latestData, trendsData] = await Promise.allSettled([
+  const [stocksData, latestData, trendsData, aiNotesData] = await Promise.allSettled([
     api.stocks(),
     api.latestAnalysis(),
     api.smcTrends(),
+    api.aiNotesLatest(),
   ])
 
   const allTracked: Stock[] = stocksData.status === "fulfilled" ? stocksData.value : []
   const latest = latestData.status === "fulfilled" ? latestData.value : { date: null, results: [] as TopPick[] }
   const trends = trendsData.status === "fulfilled" ? trendsData.value : {} as Record<string, string>
+  const aiNotes: Record<string, AiNoteLatest> = aiNotesData.status === "fulfilled" ? aiNotesData.value : {}
 
   // 建立分析資料 map
   const analysisMap: Record<string, TopPick> = {}
@@ -44,7 +46,7 @@ export default async function StocksPage() {
         <AddStockModal />
       </div>
 
-      <StocksTable stocks={merged} trends={trends} analysisDone={analysisDone} />
+      <StocksTable stocks={merged} trends={trends} analysisDone={analysisDone} aiNotes={aiNotes} />
     </div>
   )
 }

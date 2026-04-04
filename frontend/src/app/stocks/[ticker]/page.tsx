@@ -2,6 +2,7 @@ import { api } from "@/lib/api"
 import { StockChart } from "@/components/stock/StockChart"
 import { VolumeProfile } from "@/components/stock/VolumeProfile"
 import { BackButton } from "@/components/stock/BackButton"
+import { AiNotes } from "@/components/stock/AiNotes"
 import type { SmcData } from "@/lib/api"
 
 export const revalidate = 0
@@ -315,6 +316,9 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
               </div>
             </div>
           )}
+
+          {/* AI 分析記錄 */}
+          <AiNotes ticker={T} />
 
           {/* 最新新聞 */}
           {news.length > 0 && (

@@ -106,6 +106,32 @@ curl http://localhost:8000/api/v1/stocks/smc-trends
 理由：一句話說明為什麼
 ```
 
+## Step 6: 儲存 AI 分析筆記
+
+每次分析完個股或批次推薦後，**必須** 呼叫 API 儲存分析記錄：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/ai-notes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ticker": "ARM",
+    "analysis_type": "individual",        # individual / top_pick / portfolio / watchlist
+    "recommendation": "推薦",             # 強力推薦 / 推薦 / 觀察 / 不推薦
+    "action": "觀望",                     # 買入 / 加碼 / 持有 / 減倉 / 出場 / 觀望
+    "summary": "## Markdown 分析內容...",
+    "price_at_analysis": 149.11,
+    "composite_score": 66.51,
+    "smc_trend": "上升趨勢",
+    "entry_price": 142.00,
+    "stop_price": 135.50,
+    "target_price": 166.69,
+    "rr_ratio": 3.80,
+    "scenarios": {"A": {"condition": "...", "action": "..."}}
+  }'
+```
+
+這樣用戶可以在個股頁面看到 AI 分析歷史記錄、時間戳、和上次推薦。
+
 ## 重要原則
 
 1. **不追高** — 如果現價已遠離建議買入價（>5%），建議等回調

@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react"
 import Link from "next/link"
-import type { TopPick, Stock, EntrySuggestion } from "@/lib/api"
+import type { TopPick, Stock, EntrySuggestion, AiNoteLatest } from "@/lib/api"
 import { RemoveStockButton } from "./RemoveStockButton"
 
 type MergedStock = Stock & Partial<TopPick>
@@ -91,13 +91,33 @@ function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
   return <span className="text-indigo-500 ml-0.5">{dir === "asc" ? "↑" : "↓"}</span>
 }
 
+const ACTION_BADGE: Record<string, string> = {
+  "買入": "bg-green-100 text-green-700",
+  "加碼": "bg-green-50 text-green-600",
+  "持有": "bg-blue-50 text-blue-600",
+  "減倉": "bg-orange-100 text-orange-600",
+  "出場": "bg-red-100 text-red-600",
+  "觀望": "bg-slate-100 text-slate-500",
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+  return `${days}d`
+}
+
 interface Props {
   stocks: MergedStock[]
   trends: Record<string, string>
   analysisDone: boolean
+  aiNotes?: Record<string, AiNoteLatest>
 }
 
-export function StocksTable({ stocks, trends, analysisDone }: Props) {
+export function StocksTable({ stocks, trends, analysisDone, aiNotes = {} }: Props) {
   const [market, setMarket] = useState<Market>("ALL")
   const [sortKey, setSortKey] = useState<SortKey>("composite_score")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
@@ -209,6 +229,10 @@ export function StocksTable({ stocks, trends, analysisDone }: Props) {
                     <span className="text-indigo-500">量化建議</span>
                     <div className="text-slate-300 font-normal normal-case">買 / 停 / 目標</div>
                   </th>
+                  <th className="text-center px-4 py-3 min-w-[90px]">
+                    <span className="text-violet-500">🤖 AI</span>
+                    <div className="text-slate-300 font-normal normal-case">最新分析</div>
+                  </th>
                   <th className="text-center px-4 py-3">操作</th>
                 </tr>
               </thead>
@@ -265,6 +289,22 @@ export function StocksTable({ stocks, trends, analysisDone }: Props) {
                           es={s.entry_suggestion}
                           rec={s.recommendation}
                         />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {aiNotes[s.ticker] ? (
+                          <div className="text-xs space-y-0.5">
+                            <div className="flex items-center justify-center gap-1 flex-wrap">
+                              {aiNotes[s.ticker].action && (
+                                <span className={`px-1.5 py-0.5 rounded font-medium ${ACTION_BADGE[aiNotes[s.ticker].action!] ?? "bg-slate-100 text-slate-500"}`}>
+                                  {aiNotes[s.ticker].action}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-slate-400">{timeAgo(aiNotes[s.ticker].created_at)}</div>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-300">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-center">
                         <RemoveStockButton ticker={s.ticker} />

@@ -23,7 +23,7 @@ from sqlalchemy import select, text
 from .config import settings
 from .database import engine, AsyncSessionLocal, Base
 from .models import Stock, PriceHistory, AnalysisResult, NewsArticle, PortfolioTransaction, PortfolioHolding, BacktestResult
-from .routers import stocks, analysis, portfolio, backtest, sse, telegram
+from .routers import stocks, analysis, portfolio, backtest, sse, telegram, ai_notes
 from .services.fetcher import fetch_all_stocks, ensure_stock_exists
 from .services.news_crawler import crawl_and_store_news
 from .services.recommender import run_full_analysis
@@ -171,6 +171,7 @@ app.include_router(analysis.router, prefix="/api/v1")
 app.include_router(portfolio.router, prefix="/api/v1")
 app.include_router(backtest.router, prefix="/api/v1")
 app.include_router(telegram.router, prefix="/api/v1")
+app.include_router(ai_notes.router, prefix="/api/v1")
 app.include_router(sse.router)
 
 

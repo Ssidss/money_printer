@@ -61,6 +61,12 @@ export const api = {
   backtestDetail: (id: number) => get<BacktestDetail>(`/api/v1/backtest/results/${id}`),
   triggerBacktest: (body: BacktestRequest) =>
     post<{ message: string }>("/api/v1/backtest/run", body),
+
+  // AI Notes
+  aiNotes: (ticker?: string, limit = 20) =>
+    get<AiNote[]>(`/api/v1/ai-notes${ticker ? `?ticker=${encodeURIComponent(ticker)}&limit=${limit}` : `?limit=${limit}`}`),
+  aiNotesLatest: () => get<Record<string, AiNoteLatest>>("/api/v1/ai-notes/latest"),
+  aiNote: (id: number) => get<AiNote>(`/api/v1/ai-notes/${id}`),
 }
 
 // Types
@@ -164,6 +170,21 @@ export type SmcData = {
   }
   key_levels: { type: "resistance" | "support"; price: number; date: string }[]
   entry_suggestion?: EntrySuggestion | null
+}
+
+// AI Note Types
+export type AiNote = {
+  id: number; stock_id: number; ticker: string
+  analysis_type: string; recommendation: string; action: string | null
+  summary: string
+  price_at_analysis: number | null; composite_score: number | null; smc_trend: string | null
+  entry_price: number | null; stop_price: number | null; target_price: number | null; rr_ratio: number | null
+  scenarios: Record<string, unknown> | null
+  created_at: string
+}
+export type AiNoteLatest = {
+  id: number; recommendation: string; action: string | null
+  analysis_type: string; created_at: string; summary_preview: string
 }
 
 export const SSE_URL = `${BASE}/sse/progress`
