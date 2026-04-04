@@ -1,0 +1,59 @@
+# ── 環境變數（絕對不能 commit）──────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Python ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# ── 資料庫 / 本地資料 ────────────────────────────────────
+*.sqlite3
+*.db
+*.db-journal
+reports/
+data/cache/
+
+# ── Next.js / Node ───────────────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/tsconfig.tsbuildinfo
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+
+# ── macOS ────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# ── IDE ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Logs ─────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+
+# ── Claude 本地記憶（不需要版控）────────────────────────
+.claude/
+
+# ── Alembic 產生的 pycache ───────────────────────────────
+backend/alembic/versions/__pycache__/

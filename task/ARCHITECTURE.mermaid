@@ -1,0 +1,100 @@
+%% Money Printer v2 — System Architecture
+%% 前後端分離的即時股票分析平台
+
+graph TB
+    subgraph Frontend["🖥️ Frontend (Next.js + TypeScript)"]
+        direction TB
+        Dashboard["📊 Dashboard<br/>Top Picks / 市場概覽"]
+        StockList["📋 股票列表<br/>全部追蹤股票"]
+        StockDetail["📈 股票詳情<br/>K線圖 + 技術指標"]
+        Portfolio["💰 投資組合<br/>持倉 + 損益"]
+        Settings["⚙️ 設定<br/>股票管理 / 參數"]
+
+        subgraph Components["共用元件"]
+            TradingView["Lightweight Charts<br/>(K線/技術指標)"]
+            SSEHook["useSSE Hook<br/>(即時推送)"]
+            APIClient["API Client<br/>(fetch wrapper)"]
+        end
+    end
+
+    subgraph Backend["⚡ Backend (FastAPI + Python)"]
+        direction TB
+
+        subgraph Routers["API Routers"]
+            StocksAPI["/api/v1/stocks"]
+            AnalysisAPI["/api/v1/analysis"]
+            PortfolioAPI["/api/v1/portfolio"]
+            SSEAPI["/sse/*<br/>Server-Sent Events"]
+        end
+
+        subgraph Services["Service Layer"]
+            FetcherSvc["FetcherService<br/>股價抓取"]
+            TechnicalSvc["TechnicalService<br/>技術分析"]
+            SentimentSvc["SentimentService<br/>情緒分析"]
+            RecommenderSvc["RecommenderService<br/>推薦引擎"]
+            PortfolioSvc["PortfolioService<br/>組合管理"]
+        end
+
+        subgraph Core["Core"]
+            EventMgr["SSE EventManager<br/>事件廣播"]
+            Scheduler["Scheduler<br/>定時任務"]
+            StartupTask["Startup Task<br/>自動補齊資料"]
+        end
+    end
+
+    subgraph Database["🗄️ PostgreSQL"]
+        StocksTable["stocks<br/>股票基本資料"]
+        PricesTable["price_history<br/>歷史股價 OHLCV"]
+        AnalysisTable["analysis_results<br/>分析結果"]
+        NewsTable["news_articles<br/>新聞資料"]
+        TxTable["portfolio_transactions<br/>交易紀錄"]
+        HoldingsTable["portfolio_holdings<br/>當前持倉"]
+    end
+
+    subgraph External["🌐 External Data Sources"]
+        YFinance["yfinance<br/>US + TW 股價"]
+        TWStock["twstock<br/>台股即時"]
+        GoogleNews["Google News RSS"]
+        YahooNews["Yahoo Finance RSS"]
+    end
+
+    %% Frontend → Backend
+    Dashboard --> StocksAPI
+    Dashboard --> AnalysisAPI
+    StockDetail --> StocksAPI
+    Portfolio --> PortfolioAPI
+    SSEHook -.->|SSE Stream| SSEAPI
+
+    %% Routers → Services
+    StocksAPI --> FetcherSvc
+    AnalysisAPI --> TechnicalSvc
+    AnalysisAPI --> SentimentSvc
+    AnalysisAPI --> RecommenderSvc
+    PortfolioAPI --> PortfolioSvc
+    SSEAPI --> EventMgr
+
+    %% Services → Database
+    FetcherSvc --> PricesTable
+    FetcherSvc --> StocksTable
+    TechnicalSvc --> AnalysisTable
+    SentimentSvc --> NewsTable
+    RecommenderSvc --> AnalysisTable
+    PortfolioSvc --> TxTable
+    PortfolioSvc --> HoldingsTable
+
+    %% Services → External
+    FetcherSvc --> YFinance
+    FetcherSvc --> TWStock
+    SentimentSvc --> GoogleNews
+    SentimentSvc --> YahooNews
+
+    %% Core connections
+    Scheduler --> RecommenderSvc
+    StartupTask --> FetcherSvc
+    EventMgr -.->|broadcast| SSEAPI
+
+    %% Styling
+    classDef frontend fill:#1a1a2e,stroke:#16213e,color:#e94560
+    classDef backend fill:#0f3460,stroke:#16213e,color:#e94560
+    classDef db fill:#533483,stroke:#16213e,color:#e2e2e2
+    classDef external fill:#2b2d42,stroke:#16213e,color:#8d99ae
