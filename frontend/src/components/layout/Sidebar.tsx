@@ -4,8 +4,9 @@ import { usePathname } from "next/navigation"
 
 const nav = [
   { href: "/", label: "Dashboard", icon: "📊" },
+  { href: "/briefing", label: "開盤簡報", icon: "🔔" },
   { href: "/stocks", label: "股票清單", icon: "📈" },
-  { href: "/analysis", label: "分析報告", icon: "🔍" },
+  { href: "/analysis", label: "系統說明", icon: "📖" },
   { href: "/portfolio", label: "投資組合", icon: "💼" },
   { href: "/backtest", label: "回測", icon: "⏪" },
 ]

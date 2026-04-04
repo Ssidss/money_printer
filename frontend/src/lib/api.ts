@@ -68,6 +68,9 @@ export const api = {
   triggerBacktest: (body: BacktestRequest) =>
     post<{ message: string }>("/api/v1/backtest/run", body),
 
+  // Briefing
+  nextOpenBriefing: () => get<NextOpenBriefing>("/api/v1/briefing/next-open"),
+
   // AI Notes
   aiNotes: (ticker?: string, limit = 20) =>
     get<AiNote[]>(`/api/v1/ai-notes${ticker ? `?ticker=${encodeURIComponent(ticker)}&limit=${limit}` : `?limit=${limit}`}`),
@@ -176,6 +179,31 @@ export type SmcData = {
   }
   key_levels: { type: "resistance" | "support"; price: number; date: string }[]
   entry_suggestion?: EntrySuggestion | null
+}
+
+export type NextOpenBriefing = {
+  analysis_date: string | null
+  market_indices: Record<string, { price: number; change_pct: number; trend: string }>
+  portfolio: BriefingPortfolioItem[]
+  watchlist: BriefingWatchItem[]
+  portfolio_alerts: number
+}
+export type BriefingPortfolioItem = {
+  ticker: string; market: string; name: string | null
+  shares: number; avg_cost: number; current_price: number | null; pnl_pct: number | null
+  stop_loss: number; smc_trend: string; alert: string | null
+  composite_score: number | null; recommendation: string | null
+  ai_action: string | null; ai_summary_preview: string | null
+  ai_note_id: number | null; ai_note_at: string | null
+}
+export type BriefingWatchItem = {
+  ticker: string; market: string; name: string | null
+  composite_score: number | null; recommendation: string | null
+  rsi: number | null; current_price: number | null
+  entry_suggestion: EntrySuggestion | null; distance_pct: number | null
+  signals: string[]
+  ai_action: string | null; ai_summary_preview: string | null
+  ai_note_id: number | null; ai_note_at: string | null
 }
 
 export type StockAnalysisResult = {
