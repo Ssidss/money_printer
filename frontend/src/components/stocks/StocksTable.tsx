@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import Link from "next/link"
 import type { TopPick, Stock, EntrySuggestion } from "@/lib/api"
 import { RemoveStockButton } from "./RemoveStockButton"
@@ -8,12 +8,18 @@ import { RemoveStockButton } from "./RemoveStockButton"
 type MergedStock = Stock & Partial<TopPick>
 
 type Market = "ALL" | "US" | "TW"
+type SortKey = "ticker" | "close_price" | "composite_score" | "rsi" | "recommendation"
+type SortDir = "asc" | "desc"
 
 const REC_BADGE: Record<string, string> = {
   "強力推薦": "bg-green-100 text-green-700",
   "推薦":     "bg-blue-100  text-blue-700",
   "觀察":     "bg-yellow-100 text-yellow-700",
   "不推薦":   "bg-slate-100 text-slate-500",
+}
+
+const REC_ORDER: Record<string, number> = {
+  "強力推薦": 4, "推薦": 3, "觀察": 2, "不推薦": 1,
 }
 
 const TREND_STYLE: Record<string, string> = {
@@ -66,9 +72,23 @@ function EntryCell({ es, rec }: { es?: EntrySuggestion | null; rec?: string }) {
         <span className="text-slate-400">目：</span>
         <span className="font-medium text-green-600">{es.target.toFixed(2)}</span>
       </div>
-      <div className="text-slate-400">R:R <span className="font-medium text-slate-600">{es.rr}x</span></div>
+      <div className={`font-medium ${es.rr >= 2 ? "text-green-600" : es.rr >= 1.5 ? "text-yellow-600" : "text-slate-400"}`}>
+        R:R {es.rr}x
+      </div>
+      {es.position_tier && (
+        <div className={`font-bold ${
+          es.position_tier === "核心持倉" ? "text-green-600" :
+          es.position_tier === "標準倉位" ? "text-blue-600" :
+          "text-yellow-600"
+        }`}>{es.position_tier === "核心持倉" ? "🟢 核心" : es.position_tier === "標準倉位" ? "🔵 標準" : "🟡 探索"}</div>
+      )}
     </div>
   )
+}
+
+function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
+  if (!active) return <span className="text-slate-300 ml-0.5">↕</span>
+  return <span className="text-indigo-500 ml-0.5">{dir === "asc" ? "↑" : "↓"}</span>
 }
 
 interface Props {
@@ -79,9 +99,42 @@ interface Props {
 
 export function StocksTable({ stocks, trends, analysisDone }: Props) {
   const [market, setMarket] = useState<Market>("ALL")
+  const [sortKey, setSortKey] = useState<SortKey>("composite_score")
+  const [sortDir, setSortDir] = useState<SortDir>("desc")
 
-  const us = stocks.filter(s => s.market === "US")
-  const tw = stocks.filter(s => s.market === "TW")
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(d => d === "asc" ? "desc" : "asc")
+    } else {
+      setSortKey(key)
+      setSortDir("desc")
+    }
+  }
+
+  const sortFn = (a: MergedStock, b: MergedStock): number => {
+    let av: number, bv: number
+    switch (sortKey) {
+      case "ticker":
+        return sortDir === "asc"
+          ? a.ticker.localeCompare(b.ticker)
+          : b.ticker.localeCompare(a.ticker)
+      case "close_price":
+        av = a.close_price ?? -1; bv = b.close_price ?? -1; break
+      case "composite_score":
+        av = a.composite_score ?? -1; bv = b.composite_score ?? -1; break
+      case "rsi":
+        av = a.rsi ?? -1; bv = b.rsi ?? -1; break
+      case "recommendation":
+        av = REC_ORDER[a.recommendation ?? ""] ?? 0
+        bv = REC_ORDER[b.recommendation ?? ""] ?? 0; break
+      default:
+        return 0
+    }
+    return sortDir === "asc" ? av - bv : bv - av
+  }
+
+  const us = useMemo(() => stocks.filter(s => s.market === "US"), [stocks])
+  const tw = useMemo(() => stocks.filter(s => s.market === "TW"), [stocks])
 
   const groups: { label: string; key: Market; stocks: MergedStock[] }[] = [
     { label: `🇺🇸 美股`, key: "US",  stocks: us },
@@ -91,6 +144,8 @@ export function StocksTable({ stocks, trends, analysisDone }: Props) {
   const visible = market === "ALL"
     ? groups.filter(g => g.stocks.length > 0)
     : groups.filter(g => g.key === market && g.stocks.length > 0)
+
+  const thClass = "px-4 py-3 cursor-pointer select-none hover:text-indigo-600 transition-colors"
 
   return (
     <div className="space-y-6">
@@ -123,7 +178,9 @@ export function StocksTable({ stocks, trends, analysisDone }: Props) {
         </div>
       )}
 
-      {visible.map(({ label, stocks: group }) => (
+      {visible.map(({ label, stocks: group }) => {
+        const sorted = [...group].sort(sortFn)
+        return (
         <div key={label}>
           <h2 className="text-base font-semibold text-slate-700 mb-3">
             {label} <span className="text-slate-400 font-normal text-sm">({group.length})</span>
@@ -132,12 +189,22 @@ export function StocksTable({ stocks, trends, analysisDone }: Props) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wide">
-                  <th className="text-left px-4 py-3">股票</th>
-                  <th className="text-right px-4 py-3">最新價</th>
-                  <th className="px-4 py-3 w-28">綜合分</th>
-                  <th className="text-right px-4 py-3">RSI</th>
+                  <th className={`text-left ${thClass}`} onClick={() => toggleSort("ticker")}>
+                    股票 <SortIcon active={sortKey === "ticker"} dir={sortDir} />
+                  </th>
+                  <th className={`text-right ${thClass}`} onClick={() => toggleSort("close_price")}>
+                    最新價 <SortIcon active={sortKey === "close_price"} dir={sortDir} />
+                  </th>
+                  <th className={`${thClass} w-28`} onClick={() => toggleSort("composite_score")}>
+                    綜合分 <SortIcon active={sortKey === "composite_score"} dir={sortDir} />
+                  </th>
+                  <th className={`text-right ${thClass}`} onClick={() => toggleSort("rsi")}>
+                    RSI <SortIcon active={sortKey === "rsi"} dir={sortDir} />
+                  </th>
                   <th className="text-center px-4 py-3">SMC 趨勢</th>
-                  <th className="text-center px-4 py-3">推薦</th>
+                  <th className={`text-center ${thClass}`} onClick={() => toggleSort("recommendation")}>
+                    推薦 <SortIcon active={sortKey === "recommendation"} dir={sortDir} />
+                  </th>
                   <th className="text-right px-4 py-3 min-w-[110px]">
                     <span className="text-indigo-500">量化建議</span>
                     <div className="text-slate-300 font-normal normal-case">買 / 停 / 目標</div>
@@ -146,7 +213,7 @@ export function StocksTable({ stocks, trends, analysisDone }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {group.map((s) => {
+                {sorted.map((s) => {
                   const hasAnalysis = s.composite_score !== undefined
                   return (
                     <tr key={s.ticker} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
@@ -209,7 +276,8 @@ export function StocksTable({ stocks, trends, analysisDone }: Props) {
             </table>
           </div>
         </div>
-      ))}
+        )
+      })}
 
       {!analysisDone && stocks.length > 0 && (
         <p className="text-center text-xs text-slate-400 py-2">

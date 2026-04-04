@@ -14,30 +14,34 @@ from ..sse.manager import sse_manager, emit_progress
 
 
 def _compute_entry(close, ma20, bb_lower, recommendation: str) -> dict | None:
-    """根據技術指標計算量化建議買進區、停損、目標價"""
+    """舊版 MA 進場建議（向後相容用，新分析都用 SMC 驅動版）"""
     if not close:
         return None
     c = float(close)
-
-    # 取低於當前價的最強支撐
     supports = []
     if ma20:   supports.append(float(ma20))
     if bb_lower: supports.append(float(bb_lower))
-
-    valid = [s for s in supports if s < c * 1.02]  # 允許略高於現價2%
+    valid = [s for s in supports if s < c * 1.02]
     entry = max(valid) if valid else c * 0.97
-    entry = min(entry, c)  # 建議買價不高於現價
-
-    stop   = round(entry * 0.93, 2)   # 停損 -7%
-    target = round(entry * 1.15, 2)   # 停利 +15%
+    entry = min(entry, c)
+    stop   = round(entry * 0.93, 2)
+    target = round(entry * 1.15, 2)
     rr     = round((target - entry) / max(entry - stop, 0.01), 1)
+    return {"entry": round(entry, 2), "stop": stop, "target": target, "rr": rr}
 
-    return {
-        "entry":  round(entry, 2),
-        "stop":   stop,
-        "target": target,
-        "rr":     rr,
-    }
+
+def _get_entry(row) -> dict | None:
+    """優先取 SMC 驅動的 entry_suggestion，否則回退舊版 MA 計算"""
+    stored = getattr(row, "entry_suggestion", None) if hasattr(row, "entry_suggestion") else None
+    if stored and isinstance(stored, dict) and "entry" in stored:
+        return stored
+    # 回退：舊資料沒有 SMC entry，用 MA 計算
+    return _compute_entry(
+        getattr(row, "close_price", None),
+        getattr(row, "ma20", None),
+        getattr(row, "bb_lower", None),
+        getattr(row, "recommendation", ""),
+    )
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -117,12 +121,7 @@ async def top_picks(analysis_date: date | None = None, n: int = 3, db: AsyncSess
             "close_price": float(r.AnalysisResult.close_price or 0),
             "signals": r.AnalysisResult.signals,
             "news_summary": r.AnalysisResult.news_summary,
-            "entry_suggestion": _compute_entry(
-                r.AnalysisResult.close_price,
-                r.AnalysisResult.ma20,
-                r.AnalysisResult.bb_lower,
-                r.AnalysisResult.recommendation,
-            ),
+            "entry_suggestion": _get_entry(r.AnalysisResult),
         }
         for r in rows
     ]
@@ -158,12 +157,8 @@ async def latest_analysis(db: AsyncSession = Depends(get_db)):
                 "rsi": float(r.AnalysisResult.rsi or 0),
                 "close_price": float(r.AnalysisResult.close_price or 0),
                 "signals": r.AnalysisResult.signals,
-                "entry_suggestion": _compute_entry(
-                    r.AnalysisResult.close_price,
-                    r.AnalysisResult.ma20,
-                    r.AnalysisResult.bb_lower,
-                    r.AnalysisResult.recommendation,
-                ),
+                "news_summary": r.AnalysisResult.news_summary,
+                "entry_suggestion": _get_entry(r.AnalysisResult),
             }
             for r in rows
         ]

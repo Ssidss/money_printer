@@ -1,7 +1,13 @@
 from __future__ import annotations
 """
-技術分析 Service
-從 DB 讀取 price_history，計算各指標並回傳 0~100 評分
+技術分析 Service（趨勢追蹤版 v2）
+從 DB 讀取 price_history，計算動量指標並回傳 0~100 評分
+
+設計哲學：趨勢追蹤
+- RSI 高 = 動量強，不懲罰
+- 布林突破上軌 = 強勢，加分
+- 量價配合 = 關鍵確認信號
+- 與 SMC 方向一致：順勢做多
 """
 
 import logging
@@ -46,53 +52,104 @@ async def load_price_df(db: AsyncSession, stock_id: int, limit: int = 120) -> pd
     return df
 
 
+# ── 趨勢追蹤版評分函數 ──────────────────────────────────────────
+
 def _score_rsi(v: float) -> float:
-    if v <= 30:   return 100.0
-    if v <= 40:   return 80 + (40 - v) * 2
-    if v <= 50:   return 50 + (50 - v) * 3
-    if v <= 60:   return 50.0
-    if v <= 70:   return 30 + (70 - v) * 2
-    return max(0.0, 30 - (v - 70) * 3)
+    """
+    RSI 評分（趨勢追蹤）
+    - 50-70: 健康動量區間 → 高分
+    - 70-80: 強勢動量 → 仍然高分（不懲罰）
+    - >80: 極端過熱 → 輕微減分（但不重罰）
+    - 40-50: 動量偏弱
+    - <30: 超賣弱勢 → 低分（趨勢追蹤不抄底）
+    """
+    if 50 <= v <= 65:   return 85.0
+    if 65 < v <= 75:    return 80.0
+    if 75 < v <= 80:    return 70.0
+    if v > 80:          return max(50.0, 70 - (v - 80) * 2)
+    if 40 <= v < 50:    return 55.0
+    if 30 <= v < 40:    return 35.0
+    return 20.0
 
 
 def _score_macd(macd: float, sig: float, hist: float, prev_hist: float) -> float:
-    if macd > sig:
-        if macd < 0: return 95.0 if hist > prev_hist else 80.0
-        else:        return 75.0 if hist > prev_hist else 60.0
-    else:
-        return 35.0 if macd > 0 else 10.0
+    """
+    MACD 評分（趨勢追蹤）
+    - 金叉 + 柱體放大 → 最高分
+    - 金叉 + 柱體縮小 → 動量減弱但方向仍對
+    - 死叉 → 低分
+    """
+    hist_expanding = hist > prev_hist
+
+    if macd > sig:  # 金叉
+        if macd < 0:
+            return 90.0 if hist_expanding else 72.0
+        else:
+            return 85.0 if hist_expanding else 65.0
+    else:  # 死叉
+        if macd > 0:
+            return 40.0 if not hist_expanding else 30.0
+        else:
+            return 15.0
 
 
 def _score_ma(close: float, ma5: float, ma20: float, ma60: float) -> float:
+    """均線排列評分（本來就是趨勢邏輯，保持原設計）"""
     if close > ma5 > ma20 > ma60:  return 90.0
     if close > ma20 > ma60:        return 75.0
     if close > ma60:               return 60.0
     if close < ma5 < ma20 < ma60:  return 10.0
     if close < ma20 < ma60:        return 25.0
-    if close < ma60:               return 40.0
+    if close < ma60:               return 35.0
     return 50.0
 
 
 def _score_bb(close: float, upper: float, lower: float) -> float:
+    """
+    布林通道評分（趨勢追蹤版）
+    - 突破上軌 = 強勢動能，高分
+    - 中軌以上 = 健康趨勢
+    - 跌破下軌 = 弱勢
+    """
     bw = upper - lower
-    if bw == 0: return 50.0
-    pos = (close - lower) / bw
-    if pos <= 0.1:   return 90.0
-    if pos <= 0.25:  return 75.0
-    if pos <= 0.5:   return 50.0
-    if pos <= 0.75:  return 40.0
-    if pos <= 0.9:   return 20.0
-    return 10.0
+    if bw == 0:
+        return 50.0
+    mid = (upper + lower) / 2
+
+    if close > upper:   return 85.0
+    if close > mid:
+        pos = (close - mid) / (upper - mid)
+        return 65.0 + pos * 10   # 65~75
+    if close > lower:
+        pos = (close - lower) / (mid - lower)
+        return 30.0 + pos * 15   # 30~45
+    return 15.0
 
 
-def _score_volume(vol: float, vol_ma: float) -> float:
-    if vol_ma == 0: return 50.0
+def _score_volume(vol: float, vol_ma: float, is_bullish: bool) -> float:
+    """
+    量價配合評分（趨勢追蹤版）
+    - 漲 + 量增 = 好（有資金推動）
+    - 漲 + 量縮 = 差（動能不足）
+    - 跌 + 量增 = 差（賣壓湧入）
+    - 跌 + 量縮 = 中性（正常回調）
+    """
+    if vol_ma == 0:
+        return 50.0
     r = vol / vol_ma
-    if r >= 2.0:  return 90.0
-    if r >= 1.5:  return 75.0
-    if r >= 1.0:  return 60.0
-    if r >= 0.7:  return 45.0
-    return 30.0
+
+    if is_bullish:
+        if r >= 2.0:   return 95.0
+        if r >= 1.5:   return 85.0
+        if r >= 1.0:   return 70.0
+        if r >= 0.7:   return 45.0
+        return 30.0
+    else:
+        if r >= 2.0:   return 15.0
+        if r >= 1.5:   return 25.0
+        if r >= 1.0:   return 40.0
+        if r >= 0.7:   return 60.0
+        return 70.0
 
 
 def analyze_df(df: pd.DataFrame) -> dict:
@@ -120,26 +177,55 @@ def analyze_df(df: pd.DataFrame) -> dict:
     vol_ma = volume.rolling(cfg.VOLUME_MA).mean().iloc[-1]
     vol_latest = float(volume.iloc[-1])
     current = float(close.iloc[-1])
+    prev_close = float(close.iloc[-2]) if len(close) >= 2 else current
+    is_bullish = current >= prev_close
 
-    weights = {"rsi": 0.25, "macd": 0.30, "ma": 0.25, "bb": 0.10, "vol": 0.10}
+    # 權重：MACD 30% + MA 25% + RSI 20% + Vol 15% + BB 10%
+    weights = {"macd": 0.30, "ma": 0.25, "rsi": 0.20, "vol": 0.15, "bb": 0.10}
     sub = {
         "rsi":  _score_rsi(rsi),
         "macd": _score_macd(macd_val, macd_sig, macd_hist, macd_hist_prev),
         "ma":   _score_ma(current, ma5, ma20, ma60),
         "bb":   _score_bb(current, bb_upper, bb_lower),
-        "vol":  _score_volume(vol_latest, vol_ma),
+        "vol":  _score_volume(vol_latest, vol_ma, is_bullish),
     }
     total = sum(sub[k] * weights[k] for k in sub)
 
+    # 訊號文字
     signals = []
-    if rsi < cfg.RSI_OVERSOLD:   signals.append(f"RSI {rsi:.1f} 超賣（買入區）")
-    elif rsi > cfg.RSI_OVERBOUGHT: signals.append(f"RSI {rsi:.1f} 超買（注意風險）")
-    if macd_val > macd_sig:       signals.append("MACD 金叉（多頭訊號）")
-    else:                         signals.append("MACD 死叉（空頭訊號）")
-    if current > ma5 > ma20:      signals.append("均線多頭排列")
-    elif current < ma5 < ma20:    signals.append("均線空頭排列")
+    if rsi > 70:
+        signals.append(f"RSI {rsi:.1f} 動量強勁")
+    elif rsi > 50:
+        signals.append(f"RSI {rsi:.1f} 動量健康")
+    elif rsi > 30:
+        signals.append(f"RSI {rsi:.1f} 動量偏弱")
+    else:
+        signals.append(f"RSI {rsi:.1f} 極度弱勢")
+
+    if macd_val > macd_sig:
+        extra = "柱體放大" if macd_hist > macd_hist_prev else "柱體收斂"
+        signals.append(f"MACD 金叉（{extra}）")
+    else:
+        signals.append("MACD 死叉")
+
+    if current > ma5 > ma20:
+        signals.append("均線多頭排列")
+    elif current < ma5 < ma20:
+        signals.append("均線空頭排列")
+
+    if current > bb_upper:
+        signals.append("突破布林上軌（強勢動能）")
+    elif current < bb_lower:
+        signals.append("跌破布林下軌（弱勢）")
+
     vol_ratio = vol_latest / vol_ma if vol_ma > 0 else 0
-    signals.append(f"成交量 {vol_ratio:.1f}x 均量")
+    vol_dir = "漲" if is_bullish else "跌"
+    if vol_ratio >= 1.5:
+        signals.append(f"帶量{vol_dir} {vol_ratio:.1f}x 均量")
+    elif vol_ratio < 0.7:
+        signals.append(f"縮量{vol_dir} {vol_ratio:.1f}x 均量")
+    else:
+        signals.append(f"成交量 {vol_ratio:.1f}x 均量")
 
     return {
         "score": round(total, 1),

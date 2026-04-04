@@ -373,6 +373,161 @@ def trend_probability(df: pd.DataFrame, structure: dict, vp: dict) -> dict:
     }
 
 
+# ─── SMC 驅動進出場建議 ──────────────────────────────────────────────────────
+
+def compute_smc_entry(
+    close: float,
+    order_blocks: list[dict],
+    fvgs: list[dict],
+    key_levels: list[dict],
+    structure: dict,
+    vp: dict | None = None,
+) -> dict | None:
+    """
+    純 SMC 驅動的進出場建議
+    - 買入價：最近的 bullish OB 上緣 / 未填 bullish FVG 底部 / swing low 支撐
+    - 停損：買入依據的結構底部（OB bottom / FVG 底 / swing low 下方）
+    - 目標：最近的 bearish OB 底部 / swing high 壓力
+    - 風報比：動態計算
+
+    如果 SMC 資料不足則回退到 POC / VA 作為參考
+    """
+    if not close or close <= 0:
+        return None
+
+    # ── 收集支撐位（做多進場候選）──────────────────────────────
+    supports: list[dict] = []   # {price, stop, source}
+
+    # 1) 未被 mitigate 的 bullish OB → 機構買盤區域
+    for ob in order_blocks:
+        if ob["type"] == "bullish" and not ob.get("mitigated", True):
+            ob_top = ob["top"]
+            ob_bottom = ob["bottom"]
+            if ob_top < close * 1.02:  # OB 在現價下方（或略高 2%）
+                supports.append({
+                    "price": ob_top,       # 進場在 OB 上緣
+                    "stop": ob_bottom,     # 停損在 OB 下緣（結構失效）
+                    "source": "OB",
+                    "strength": ob.get("strength", 0),
+                })
+
+    # 2) 未填的 bullish FVG → 效率缺口回補區
+    for fvg in fvgs:
+        if fvg["type"] == "bullish" and not fvg.get("filled", True):
+            fvg_top = fvg["top"]
+            fvg_bottom = fvg["bottom"]
+            if fvg_top < close * 1.02:
+                supports.append({
+                    "price": fvg_bottom,   # 進場在缺口底部（深度回補）
+                    "stop": fvg_bottom * 0.98,  # 停損在缺口下方 2%
+                    "source": "FVG",
+                    "strength": fvg.get("gap_pct", 0),
+                })
+
+    # 3) swing low 支撐位
+    for lv in key_levels:
+        if lv["type"] == "support" and lv["price"] < close:
+            supports.append({
+                "price": lv["price"],
+                "stop": lv["price"] * 0.97,  # 跌破支撐 3% = 失效
+                "source": "SwingLow",
+                "strength": 0,
+            })
+
+    # 4) POC / VA 作為次要參考
+    if vp:
+        poc = vp.get("poc", 0)
+        va_low = vp.get("va_low", 0)
+        if 0 < poc < close:
+            supports.append({
+                "price": poc,
+                "stop": va_low if va_low > 0 else poc * 0.95,
+                "source": "POC",
+                "strength": 0,
+            })
+
+    # ── 收集壓力位（目標價候選）──────────────────────────────
+    resistances: list[float] = []
+
+    # 1) bearish OB 底部 → 機構賣壓區
+    for ob in order_blocks:
+        if ob["type"] == "bearish" and not ob.get("mitigated", True):
+            if ob["bottom"] > close:
+                resistances.append(ob["bottom"])
+
+    # 2) swing high 壓力位
+    for lv in key_levels:
+        if lv["type"] == "resistance" and lv["price"] > close:
+            resistances.append(lv["price"])
+
+    # 3) VA high 作為次要目標
+    if vp:
+        va_high = vp.get("va_high", 0)
+        if va_high > close:
+            resistances.append(va_high)
+
+    # ── 選出最佳進場組合 ──────────────────────────────────────
+
+    if not supports:
+        # 完全沒有 SMC 支撐 → 簡易回退（現價下方 3%）
+        entry = round(close * 0.97, 2)
+        stop = round(close * 0.90, 2)  # -7% from entry
+    else:
+        # 選離現價最近的支撐（最有可能觸及且風報比合理）
+        supports.sort(key=lambda s: abs(close - s["price"]))
+        best = supports[0]
+
+        # 如果最近支撐離現價太遠（>10%），取較近的或直接用現價折扣
+        if best["price"] < close * 0.90:
+            entry = round(close * 0.97, 2)
+            stop = round(best["stop"], 2) if best["stop"] > close * 0.85 else round(close * 0.93, 2)
+        else:
+            entry = round(best["price"], 2)
+            stop = round(best["stop"], 2)
+
+    # 停損不能高於買入價
+    if stop >= entry:
+        stop = round(entry * 0.93, 2)
+
+    # ── 目標價 ────────────────────────────────────────────────
+    if resistances:
+        # 取最近的壓力位作為目標
+        resistances.sort()
+        target = round(resistances[0], 2)
+        # 如果目標太近（< 5% 獲利），取下一個
+        if target < entry * 1.05 and len(resistances) > 1:
+            target = round(resistances[1], 2)
+        # 如果還是太近，用固定比例
+        if target < entry * 1.05:
+            target = round(entry * 1.12, 2)
+    else:
+        target = round(entry * 1.12, 2)
+
+    # 確保目標高於進場
+    if target <= entry:
+        target = round(entry * 1.10, 2)
+
+    # ── 風報比 ────────────────────────────────────────────────
+    risk = entry - stop
+    reward = target - entry
+    rr = round(reward / max(risk, 0.01), 1) if risk > 0 else 0
+
+    # 收集建議來源說明
+    sources_used = list(set(s["source"] for s in supports[:3])) if supports else ["Fallback"]
+    target_source = "OB壓力" if any(ob["type"] == "bearish" and not ob.get("mitigated") and ob["bottom"] == target for ob in order_blocks) else "結構壓力"
+
+    return {
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+        "rr": rr,
+        "entry_basis": "+".join(sources_used),       # e.g. "OB+FVG"
+        "target_basis": target_source,
+        "risk_pct": round((entry - stop) / entry * 100, 1),
+        "reward_pct": round((target - entry) / entry * 100, 1),
+    }
+
+
 # ─── 主入口 ────────────────────────────────────────────────────────────────────
 
 def run_smc_analysis(df: pd.DataFrame) -> dict[str, Any]:
@@ -396,6 +551,16 @@ def run_smc_analysis(df: pd.DataFrame) -> dict[str, Any]:
         key_levels.append({"type": "support", "price": sl["price"], "date": sl["date"]})
     key_levels.sort(key=lambda x: x["price"])
 
+    close = float(df["Close"].iloc[-1])
+    entry_sug = compute_smc_entry(
+        close=close,
+        order_blocks=obs,
+        fvgs=fvgs,
+        key_levels=key_levels,
+        structure=structure,
+        vp=vp,
+    )
+
     return {
         "order_blocks": obs,
         "fvg": fvgs,
@@ -403,4 +568,5 @@ def run_smc_analysis(df: pd.DataFrame) -> dict[str, Any]:
         "volume_profile": vp,
         "probability": prob,
         "key_levels": key_levels,
+        "entry_suggestion": entry_sug,
     }

@@ -1,7 +1,12 @@
 from __future__ import annotations
 """
-推薦引擎 Service
-整合技術分析 + 情緒分析 → 評分排名 → 寫入 analysis_results
+推薦引擎 Service（分層決策版 v2）
+
+架構：
+  Layer 1: SMC 結構（方向門檻）→ 通過 / 排除 / 觀望
+  Layer 2: 動量確認（technical.py）→ 動量分 0-100
+  Layer 3: 催化劑確認（新聞情緒）→ 加速 / 中性 / 警告
+  → 條件計數決定推薦等級 + 倉位大小
 """
 
 import logging
@@ -16,23 +21,135 @@ from ..models.stock import Stock
 from ..models.analysis import AnalysisResult, NewsArticle
 from .technical import analyze_stock, load_price_df
 from .sentiment import aggregate_sentiment
-from .smc import find_structure
-
-# SMC 趨勢對綜合分的乘數
-# 下降趨勢：逆勢做多勝率低，重扣並封頂"觀察"
-# 盤整：方向未明，輕扣
-# 上升趨勢：順勢，小幅加分
-SMC_SCORE_MULTIPLIER: dict[str, float] = {
-    "上升趨勢": 1.10,
-    "盤整":     0.90,
-    "下降趨勢": 0.70,
-    "未知":     0.95,
-}
-
-# 下降趨勢時推薦等級上限（不管分數多高都不能推薦）
-SMC_DOWNTREND_CAP = "觀察"
+from .smc import find_structure, run_smc_analysis, compute_smc_entry
 
 logger = logging.getLogger(__name__)
+
+# ── 倉位等級定義 ─────────────────────────────────────────────
+POSITION_TIERS = {
+    "核心持倉": {"pct": "15-20%", "desc": "高信心，結構+動量+催化劑全到位"},
+    "標準倉位": {"pct": "8-12%",  "desc": "中等信心，主要條件滿足"},
+    "探索倉位": {"pct": "3-5%",   "desc": "低信心或觀望，先小量試探"},
+}
+
+
+def _layered_decision(
+    smc_trend: str,
+    momentum_score: float,
+    catalyst: str,       # "加速" / "中性" / "警告"
+    rr: float | None,    # 風報比
+) -> dict:
+    """
+    分層決策引擎（取代加權平均）
+
+    Returns:
+        {
+            "recommendation": str,
+            "position_tier": str | None,
+            "composite_score": float,
+            "signals_met": int,
+            "reason": str,
+        }
+    """
+    # ── Layer 1: SMC 門檻 ─────────────────────────────────
+    if smc_trend == "下降趨勢":
+        return {
+            "recommendation": "不推薦",
+            "position_tier": None,
+            "composite_score": round(momentum_score * 0.5, 1),  # 壓低分數但保留資訊
+            "signals_met": 0,
+            "reason": "SMC 下降結構，不做多",
+        }
+
+    # ── 條件計數 ──────────────────────────────────────────
+    signals_met = 0
+    reasons = []
+
+    # 條件 1: SMC 結構方向
+    if smc_trend == "上升趨勢":
+        signals_met += 1
+        reasons.append("SMC 上升結構")
+    # 盤整不加分也不排除
+
+    # 條件 2: 動量分
+    if momentum_score >= 70:
+        signals_met += 1
+        reasons.append(f"動量強勁 ({momentum_score:.0f})")
+    elif momentum_score >= 60:
+        signals_met += 1
+        reasons.append(f"動量健康 ({momentum_score:.0f})")
+
+    # 條件 3: 催化劑
+    if catalyst == "加速":
+        signals_met += 1
+        reasons.append("有正面催化劑")
+    elif catalyst == "警告":
+        signals_met -= 1  # 扣分
+        reasons.append("有負面催化劑")
+
+    # 條件 4: 風報比
+    if rr is not None and rr >= 2.0:
+        signals_met += 1
+        reasons.append(f"風報比優秀 ({rr}x)")
+    elif rr is not None and rr >= 1.5:
+        # 可接受但不加分
+        pass
+
+    # ── 決策 ──────────────────────────────────────────────
+    # 計算綜合分（保留用於排序，但不再驅動推薦等級）
+    # 基礎分 = 動量分，根據條件數微調
+    base = momentum_score
+    if smc_trend == "上升趨勢":
+        base = min(base * 1.10, 100)
+    elif smc_trend == "盤整":
+        base = base * 0.92
+
+    if catalyst == "加速":
+        base = min(base * 1.05, 100)
+    elif catalyst == "警告":
+        base = base * 0.90
+
+    composite = round(base, 1)
+
+    # 推薦等級 + 倉位（由條件計數決定）
+    if signals_met >= 4:
+        rec = "強力推薦"
+        tier = "核心持倉"
+    elif signals_met >= 3:
+        rec = "推薦"
+        tier = "標準倉位"
+    elif signals_met >= 2:
+        rec = "觀察"
+        tier = "探索倉位"
+    else:
+        rec = "不推薦"
+        tier = None
+
+    # 盤整中即使條件夠多，最高只到「標準倉位」
+    if smc_trend == "盤整" and tier == "核心持倉":
+        tier = "標準倉位"
+
+    return {
+        "recommendation": rec,
+        "position_tier": tier,
+        "composite_score": composite,
+        "signals_met": signals_met,
+        "reason": " + ".join(reasons) if reasons else "條件不足",
+    }
+
+
+def _catalyst_level(sentiment: dict) -> str:
+    """將情緒分析結果轉換為催化劑等級"""
+    score = sentiment.get("score", 50)
+    count = sentiment.get("article_count", 0)
+
+    if count == 0:
+        return "中性"    # 沒有新聞 = 不加不減
+    if score >= 65:
+        return "加速"    # 正面催化劑
+    if score <= 35:
+        return "警告"    # 負面催化劑
+    return "中性"
 
 
 async def run_analysis_for_stock(
@@ -41,21 +158,18 @@ async def run_analysis_for_stock(
     analysis_date: date | None = None,
 ) -> dict | None:
     """
-    對單一股票執行分析並寫入 DB
-
-    Returns:
-        分析結果 dict，失敗回傳 None
+    對單一股票執行分層分析並寫入 DB
     """
     if analysis_date is None:
         analysis_date = date.today()
 
-    # 技術分析
+    # ── Layer 2: 動量分析（technical.py） ─────────────────
     tech = await analyze_stock(db, stock.id)
     if tech is None:
         logger.warning(f"{stock.ticker} 技術分析失敗（資料不足）")
         return None
 
-    # 情緒分析（從 DB 取最近新聞）
+    # ── Layer 3: 催化劑（新聞情緒） ──────────────────────
     news_result = await db.execute(
         select(NewsArticle.sentiment_score)
         .where(NewsArticle.stock_id == stock.id)
@@ -64,45 +178,42 @@ async def run_analysis_for_stock(
     )
     sentiment_scores = [float(s) for s in news_result.scalars().all() if s is not None]
     sentiment = aggregate_sentiment(sentiment_scores)
+    catalyst = _catalyst_level(sentiment)
 
-    # SMC 市場結構分析（輕量版：只算趨勢，不跑完整 SMC）
+    # ── Layer 1: SMC 結構分析（門檻） ────────────────────
     smc_trend = "未知"
+    smc_entry: dict | None = None
     try:
-        df = await load_price_df(db, stock.id, limit=60)
-        if df is not None:
-            struct = find_structure(df)
-            smc_trend = struct.get("trend", "未知")
+        df = await load_price_df(db, stock.id, limit=120)
+        if df is not None and len(df) >= 30:
+            smc_result = run_smc_analysis(df)
+            smc_trend = smc_result.get("structure", {}).get("trend", "未知")
+            smc_entry = smc_result.get("entry_suggestion")
     except Exception as e:
-        logger.warning(f"{stock.ticker} SMC 趨勢計算失敗: {e}")
+        logger.warning(f"{stock.ticker} SMC 分析失敗: {e}")
 
-    # 綜合評分（技術 + 情緒，再套 SMC 趨勢乘數）
-    w_tech = settings.WEIGHT_TECHNICAL
-    w_sent = settings.WEIGHT_SENTIMENT
-    base_composite = tech["score"] * w_tech + sentiment["score"] * w_sent
-    smc_mult = SMC_SCORE_MULTIPLIER.get(smc_trend, 1.0)
-    composite = min(base_composite * smc_mult, 100.0)  # 不超過100
+    # ── 分層決策 ──────────────────────────────────────────
+    rr = smc_entry.get("rr") if smc_entry else None
+    decision = _layered_decision(smc_trend, tech["score"], catalyst, rr)
 
-    # 推薦等級
-    if composite >= 75:   recommendation = "強力推薦"
-    elif composite >= 65: recommendation = "推薦"
-    elif composite >= 55: recommendation = "觀察"
-    else:                 recommendation = "不推薦"
+    recommendation = decision["recommendation"]
+    composite = decision["composite_score"]
+    position_tier = decision["position_tier"]
 
-    # 下降趨勢：推薦等級封頂（無論分數多高都不能是「推薦」以上）
-    if smc_trend == "下降趨勢" and recommendation in ("強力推薦", "推薦"):
-        recommendation = SMC_DOWNTREND_CAP
-
-    # 把 SMC 趨勢加入訊號說明
-    smc_signal_text = {
-        "上升趨勢": f"SMC 上升趨勢 ✅（順勢加分 ×{SMC_SCORE_MULTIPLIER['上升趨勢']}）",
-        "下降趨勢": f"SMC 下降趨勢 ⚠️（逆勢重扣 ×{SMC_SCORE_MULTIPLIER['下降趨勢']}，推薦封頂「觀察」）",
-        "盤整":     f"SMC 盤整中 〰️（方向不明扣分 ×{SMC_SCORE_MULTIPLIER['盤整']}）",
-        "未知":     "SMC 趨勢未知（資料不足）",
-    }.get(smc_trend, "")
-    if smc_signal_text:
-        tech["signals"].append(smc_signal_text)
+    # 把分層結果加入訊號說明
+    tech["signals"].append(f"SMC: {smc_trend}")
+    tech["signals"].append(f"催化劑: {catalyst}")
+    if position_tier:
+        tech["signals"].append(f"倉位建議: {position_tier}")
+    tech["signals"].append(f"分層決策: {decision['reason']}")
 
     ind = tech["indicators"]
+
+    # 把 position_tier 加入 entry_suggestion
+    if smc_entry and position_tier:
+        smc_entry["position_tier"] = position_tier
+    elif smc_entry:
+        smc_entry["position_tier"] = None
 
     # Upsert analysis_results
     stmt = insert(AnalysisResult).values(
@@ -124,6 +235,7 @@ async def run_analysis_for_stock(
         close_price=ind.get("price"),
         signals=tech["signals"],
         news_summary=sentiment,
+        entry_suggestion=smc_entry,
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=["stock_id", "analysis_date"],
@@ -138,6 +250,7 @@ async def run_analysis_for_stock(
             "close_price": ind.get("price"),
             "signals": tech["signals"],
             "news_summary": sentiment,
+            "entry_suggestion": smc_entry,
         }
     )
     await db.execute(stmt)
@@ -150,7 +263,10 @@ async def run_analysis_for_stock(
         "technical_score": round(tech["score"], 2),
         "sentiment_score": round(sentiment["score"], 2),
         "recommendation": recommendation,
+        "position_tier": position_tier,
         "smc_trend": smc_trend,
+        "catalyst": catalyst,
+        "signals_met": decision["signals_met"],
         "indicators": ind,
         "signals": tech["signals"],
         "news_sentiment": sentiment,

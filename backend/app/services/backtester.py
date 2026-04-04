@@ -19,12 +19,13 @@ from .smc import find_structure
 
 logger = logging.getLogger(__name__)
 
-# 與 recommender 保持一致的 SMC 乘數
+# 與 recommender v2 保持一致的 SMC 調整係數
+# 注意：下降趨勢在 SMC 過濾階段已被排除（不進入排序）
 _SMC_MULT = {
     "上升趨勢": 1.10,
-    "盤整":     0.90,
-    "下降趨勢": 0.70,
-    "未知":     0.95,
+    "盤整":     0.92,
+    "下降趨勢": 0.50,   # 理論上不會用到（已被過濾），保留作為 fallback
+    "未知":     1.00,
 }
 
 
@@ -155,13 +156,10 @@ async def run_backtest(
     end_date: date,
     buy_threshold: float = 60.0,      # 技術分 >= 此值才考慮買入
     stop_loss_pct: float = 0.07,
-    take_profit_pct: float = 0.15,
     trailing_stop_pct: float = 0.05,
     initial_capital: float = 1_000_000,
     position_size_pct: float = 0.1,    # 每次買入占總資金 10%
     max_positions: int = 5,            # 最多同時持有幾支
-    w_technical: float = 0.6,
-    w_sentiment: float = 0.4,
     use_smc_filter: bool = True,       # 是否啟用 SMC 趨勢過濾
     smc_exit_on_downtrend: bool = True, # 持倉中途若 SMC 轉下降趨勢則出場
     progress_cb=None,
@@ -173,10 +171,9 @@ async def run_backtest(
         start_date / end_date: 回測期間
         buy_threshold: 技術分超過此值才買入
         stop_loss_pct: 停損比例
-        take_profit_pct: 停利比例
-        trailing_stop_pct: 追蹤停損比例
+        trailing_stop_pct: 追蹤停損比例（利潤達 5% 後啟動）
         initial_capital: 初始資金
-        position_size_pct: 每筆交易占資金比例
+        position_size_pct: 每筆交易占總資產比例
         max_positions: 最多同時持倉數
     """
     if progress_cb:
@@ -222,12 +219,10 @@ async def run_backtest(
             exit_reason = None
             if pnl <= -stop_loss_pct:
                 exit_reason = "停損"
-            elif pnl >= take_profit_pct:
-                exit_reason = "停利"
-            elif pnl > 0.03 and drawdown >= trailing_stop_pct:
+            elif pnl > 0.05 and drawdown >= trailing_stop_pct:
+                # 追蹤停損：只在已有 5%+ 利潤時才啟動，保護獲利但不截斷上升趨勢
                 exit_reason = "追蹤停損"
             elif use_smc_filter and smc_exit_on_downtrend:
-                # 持倉中途 SMC 結構轉為下降趨勢 → 提早出場保護獲利
                 smc_now = _calc_smc_trend(df, today)
                 if smc_now == "下降趨勢" and pnl > -stop_loss_pct * 0.5:
                     exit_reason = "SMC趨勢反轉"
@@ -278,7 +273,15 @@ async def run_backtest(
             for ticker, adj_score, price in candidates[:slots]:
                 if price <= 0:
                     continue
-                invest = capital * position_size_pct
+                # 用總資產（現金+持倉市值）計算倉位，避免現金拖累
+                total_equity = capital + sum(
+                    float(price_dfs[t_].loc[today, "Close"]) * pos_["shares"]
+                    for t_, pos_ in positions.items()
+                    if t_ in price_dfs and today in price_dfs[t_].index
+                )
+                invest = min(total_equity * position_size_pct, capital)
+                if invest <= 0:
+                    continue
                 shares = invest / price
                 capital -= invest
                 positions[ticker] = {
@@ -331,7 +334,7 @@ async def run_backtest(
     config = {
         "start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
         "buy_threshold": buy_threshold, "stop_loss_pct": stop_loss_pct,
-        "take_profit_pct": take_profit_pct, "trailing_stop_pct": trailing_stop_pct,
+        "trailing_stop_pct": trailing_stop_pct,
         "initial_capital": initial_capital, "position_size_pct": position_size_pct,
         "max_positions": max_positions,
         "use_smc_filter": use_smc_filter,

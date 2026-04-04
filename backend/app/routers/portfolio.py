@@ -89,12 +89,13 @@ async def sell(req: SellRequest, db: AsyncSession = Depends(get_db)):
     )
     db.add(txn)
 
+    avg_cost = float(holding.avg_cost)  # 在刪除前保存
     holding.total_shares -= req.shares
     if holding.total_shares <= 0:
         await db.delete(holding)
 
     await db.commit()
-    pnl = (req.price - float(holding.avg_cost)) / float(holding.avg_cost) * 100
+    pnl = (req.price - avg_cost) / avg_cost * 100
     return {"message": f"賣出 {ticker} x{req.shares} @ {req.price}", "pnl_pct": round(pnl, 2)}
 
 

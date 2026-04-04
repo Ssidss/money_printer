@@ -9,6 +9,7 @@ from ..models.stock import Stock, PriceHistory
 from ..models.analysis import AnalysisResult, NewsArticle
 from ..services.technical import load_price_df
 from ..services.smc import run_smc_analysis, find_structure
+from .analysis import _get_entry
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
 
@@ -109,6 +110,7 @@ async def get_analysis(ticker: str, limit: int = 30, db: AsyncSession = Depends(
             "close_price": float(r.close_price) if r.close_price else None,
             "signals": r.signals,
             "news_summary": r.news_summary,
+            "entry_suggestion": _get_entry(r),
         }
         for r in reversed(rows)
     ]

@@ -1,6 +1,7 @@
 import { api } from "@/lib/api"
 import { StockChart } from "@/components/stock/StockChart"
 import { VolumeProfile } from "@/components/stock/VolumeProfile"
+import { BackButton } from "@/components/stock/BackButton"
 import type { SmcData } from "@/lib/api"
 
 export const revalidate = 0
@@ -10,6 +11,13 @@ const TREND_COLOR: Record<string, string> = {
   "下降趨勢": "text-red-500 bg-red-50 border-red-200",
   "盤整":     "text-yellow-600 bg-yellow-50 border-yellow-200",
   "未知":     "text-slate-500 bg-slate-100 border-slate-200",
+}
+
+const REC_BADGE: Record<string, string> = {
+  "強力推薦": "bg-green-100 text-green-700 border-green-200",
+  "推薦":     "bg-blue-100 text-blue-700 border-blue-200",
+  "觀察":     "bg-yellow-100 text-yellow-700 border-yellow-200",
+  "不推薦":   "bg-slate-100 text-slate-500 border-slate-200",
 }
 
 export default async function StockDetailPage({ params }: { params: Promise<{ ticker: string }> }) {
@@ -30,18 +38,25 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
   const latest   = analysis[analysis.length - 1] ?? null
   const prob     = smc?.probability
   const vp       = smc?.volume_profile
+  const entry    = latest?.entry_suggestion
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
 
-      {/* Header */}
+      {/* Back Button + Header */}
       <div className="flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-3">
+          <BackButton />
+          <div className="flex items-center gap-3 mt-1">
             <h1 className="text-3xl font-bold text-slate-800">{T}</h1>
             {smc?.structure?.trend && (
               <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${TREND_COLOR[smc.structure.trend] ?? TREND_COLOR["未知"]}`}>
                 {smc.structure.trend}
+              </span>
+            )}
+            {latest?.recommendation && (
+              <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${REC_BADGE[latest.recommendation] ?? REC_BADGE["不推薦"]}`}>
+                {latest.recommendation}
               </span>
             )}
           </div>
@@ -71,6 +86,69 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
           </div>
         )}
       </div>
+
+      {/* SMC 驅動進出場建議 */}
+      {entry && latest?.recommendation !== "不推薦" && (
+        <div className="rounded-xl border-2 border-indigo-200 bg-gradient-to-r from-indigo-50 to-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-lg">🎯</span>
+            <h3 className="font-semibold text-slate-800">SMC 進出場建議</h3>
+            {entry.position_tier && (
+              <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
+                entry.position_tier === "核心持倉" ? "bg-green-100 text-green-700 border border-green-200" :
+                entry.position_tier === "標準倉位" ? "bg-blue-100 text-blue-700 border border-blue-200" :
+                "bg-yellow-100 text-yellow-700 border border-yellow-200"
+              }`}>
+                {entry.position_tier}
+              </span>
+            )}
+            {entry.entry_basis && (
+              <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-medium">
+                依據: {entry.entry_basis}
+              </span>
+            )}
+            <span className="text-xs text-slate-400 ml-auto">基於 Order Block / FVG / 市場結構計算</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="rounded-lg bg-indigo-100/60 border border-indigo-200 p-4 text-center">
+              <p className="text-xs text-indigo-500 font-medium uppercase tracking-wide mb-1">建議買入價</p>
+              <p className="text-2xl font-bold text-indigo-700">{entry.entry.toFixed(2)}</p>
+              {latest.close_price && (
+                <p className="text-xs text-indigo-400 mt-1">
+                  {entry.entry < latest.close_price
+                    ? `低於現價 ${((1 - entry.entry / latest.close_price) * 100).toFixed(1)}%`
+                    : "接近現價"
+                  }
+                </p>
+              )}
+            </div>
+            <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-center">
+              <p className="text-xs text-red-500 font-medium uppercase tracking-wide mb-1">停損價</p>
+              <p className="text-2xl font-bold text-red-600">{entry.stop.toFixed(2)}</p>
+              <p className="text-xs text-red-400 mt-1">
+                風險 -{entry.risk_pct ?? ((1 - entry.stop / entry.entry) * 100).toFixed(1)}%
+              </p>
+            </div>
+            <div className="rounded-lg bg-green-50 border border-green-200 p-4 text-center">
+              <p className="text-xs text-green-600 font-medium uppercase tracking-wide mb-1">目標價</p>
+              <p className="text-2xl font-bold text-green-600">{entry.target.toFixed(2)}</p>
+              <p className="text-xs text-green-500 mt-1">
+                獲利 +{entry.reward_pct ?? ((entry.target / entry.entry - 1) * 100).toFixed(1)}%
+                {entry.target_basis && <span className="text-slate-400 ml-1">({entry.target_basis})</span>}
+              </p>
+            </div>
+            <div className="rounded-lg bg-slate-50 border border-slate-200 p-4 text-center">
+              <p className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-1">風報比 R:R</p>
+              <p className={`text-2xl font-bold ${entry.rr >= 2 ? "text-green-600" : entry.rr >= 1.5 ? "text-yellow-600" : "text-red-500"}`}>
+                {entry.rr}x
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                {entry.rr >= 2 ? "優秀" : entry.rr >= 1.5 ? "可接受" : "偏低"}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Chart */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
@@ -150,7 +228,7 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
           {/* Fair Value Gaps */}
           {smc?.fvg && smc.fvg.filter(f => !f.filled).length > 0 && (
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="font-semibold text-slate-800 mb-3">🕳 Fair Value Gaps（未填缺口）</h3>
+              <h3 className="font-semibold text-slate-800 mb-3">🕳 Fair Value Gaps</h3>
               <p className="text-xs text-slate-400 mb-3">價格快速移動留下的缺口，市場有高機率回補</p>
               <div className="space-y-2">
                 {smc.fvg.filter(f => !f.filled).slice(0, 6).map((f, i) => (

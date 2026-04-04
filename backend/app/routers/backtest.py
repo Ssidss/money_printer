@@ -19,7 +19,6 @@ class BacktestRequest(BaseModel):
     end_date: date
     buy_threshold: float = 60.0
     stop_loss_pct: float = 0.07
-    take_profit_pct: float = 0.15
     trailing_stop_pct: float = 0.05
     initial_capital: float = 1_000_000
     position_size_pct: float = 0.1
@@ -42,7 +41,6 @@ async def _run_and_save(req: BacktestRequest):
                 end_date=req.end_date,
                 buy_threshold=req.buy_threshold,
                 stop_loss_pct=req.stop_loss_pct,
-                take_profit_pct=req.take_profit_pct,
                 trailing_stop_pct=req.trailing_stop_pct,
                 initial_capital=req.initial_capital,
                 position_size_pct=req.position_size_pct,

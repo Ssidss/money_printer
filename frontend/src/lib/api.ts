@@ -70,13 +70,19 @@ export type AnalysisRow = {
   date: string; composite_score: number; technical_score: number; sentiment_score: number
   recommendation: string; rsi: number; macd: number; close_price: number
   signals: string[]; news_summary: Record<string, unknown>
+  entry_suggestion?: EntrySuggestion | null
 }
 export type NewsItem = { id: number; title: string; url: string; source: string; published_at: string; sentiment_score: number }
 export type EntrySuggestion = {
-  entry: number   // 建議買進價
-  stop: number    // 建議停損價
-  target: number  // 目標價
-  rr: number      // 風報比
+  entry: number        // 建議買進價
+  stop: number         // 建議停損價
+  target: number       // 目標價
+  rr: number           // 風報比
+  entry_basis?: string // 進場依據 e.g. "OB+FVG"
+  target_basis?: string // 目標依據 e.g. "OB壓力"
+  risk_pct?: number    // 風險百分比
+  reward_pct?: number  // 獲利百分比
+  position_tier?: string | null  // 倉位等級: "核心持倉" / "標準倉位" / "探索倉位"
 }
 
 export type TopPick = {
@@ -118,7 +124,7 @@ export type BacktestTrade = {
 }
 export type BacktestRequest = {
   name?: string; start_date: string; end_date: string
-  buy_threshold?: number; stop_loss_pct?: number; take_profit_pct?: number
+  buy_threshold?: number; stop_loss_pct?: number; trailing_stop_pct?: number
   initial_capital?: number; position_size_pct?: number; max_positions?: number
   use_smc_filter?: boolean; smc_exit_on_downtrend?: boolean
 }
@@ -157,6 +163,7 @@ export type SmcData = {
     outlook: string; detail: string; reasons: string[]
   }
   key_levels: { type: "resistance" | "support"; price: number; date: string }[]
+  entry_suggestion?: EntrySuggestion | null
 }
 
 export const SSE_URL = `${BASE}/sse/progress`

@@ -15,7 +15,7 @@ export function BacktestForm() {
     end_date: today,
     buy_threshold: 60,
     stop_loss_pct: 7,
-    take_profit_pct: 15,
+    trailing_stop_pct: 5,
     initial_capital: 1000000,
     position_size_pct: 10,
     max_positions: 5,
@@ -37,7 +37,7 @@ export function BacktestForm() {
         end_date: form.end_date,
         buy_threshold: form.buy_threshold,
         stop_loss_pct: form.stop_loss_pct / 100,
-        take_profit_pct: form.take_profit_pct / 100,
+        trailing_stop_pct: form.trailing_stop_pct / 100,
         initial_capital: form.initial_capital,
         position_size_pct: form.position_size_pct / 100,
         max_positions: form.max_positions,
@@ -94,9 +94,9 @@ export function BacktestForm() {
           />
         </div>
         <div>
-          <label className="text-xs text-slate-500 uppercase tracking-wide">停利 (%)</label>
-          <input type="number" value={form.take_profit_pct} onChange={e => set("take_profit_pct", parseFloat(e.target.value))}
-            min={5} max={50} step={5}
+          <label className="text-xs text-slate-500 uppercase tracking-wide">追蹤停損 (%)</label>
+          <input type="number" value={form.trailing_stop_pct} onChange={e => set("trailing_stop_pct", parseFloat(e.target.value))}
+            min={3} max={20} step={1}
             className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
           />
         </div>
@@ -135,7 +135,7 @@ export function BacktestForm() {
           />
           <span className="text-sm text-slate-700">
             <span className="font-medium">過濾下降趨勢</span>
-            <span className="text-slate-400 ml-1">（下降趨勢不買入，調整分排序）</span>
+            <span className="text-slate-400 ml-1">（下降趨勢不買入，上升/盤整調整排序權重）</span>
           </span>
         </label>
         <label className="flex items-center gap-2 cursor-pointer">

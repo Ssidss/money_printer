@@ -39,6 +39,7 @@ class AnalysisResult(Base):
 
     signals: Mapped[Optional[list]] = mapped_column(JSONB, default=list)
     news_summary: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
+    entry_suggestion: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=datetime.utcnow)
 
