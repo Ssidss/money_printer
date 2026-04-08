@@ -10,6 +10,7 @@ from ..models.stock import Stock
 from ..models.analysis import AnalysisResult
 from ..services.recommender import run_full_analysis
 from ..services.news_crawler import crawl_and_store_news
+from ..services.smc_worker import run_smc_batch
 from ..sse.manager import sse_manager, emit_progress
 
 
@@ -43,6 +44,25 @@ def _get_entry(row) -> dict | None:
         getattr(row, "recommendation", ""),
     )
 
+def _extract_smc_summary(row: AnalysisResult) -> dict | None:
+    """從 AnalysisResult 提取 SMC v2 精簡摘要，無 v2 數據回傳 None。"""
+    if not row.smc_data:
+        return None
+    smc = row.smc_data
+    ep = row.entry_plan or {}
+    return {
+        "trend": smc.get("structure", {}).get("trend", "unknown"),
+        "regime": row.regime,
+        "recommendation": ep.get("recommendation"),
+        "action": ep.get("action"),
+        "entry_price": ep.get("entry_price"),
+        "stop_price": ep.get("stop_price"),
+        "target_price": ep.get("target_price"),
+        "rr_ratio": ep.get("rr_ratio"),
+        "position_tier": ep.get("position_tier"),
+    }
+
+
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 _running = False   # 防止同時多次觸發
@@ -68,12 +88,17 @@ async def _run_pipeline(news_days: int = 3):
                 )
                 await crawl_and_store_news(db, stock, days=news_days)
 
-            # Step 2: 分析評分
+            # Step 2: v1 分析評分
             result = await run_full_analysis(db, progress_cb=emit_progress)
+
+            # Step 3: SMC v2 分析（利用 Step 1 爬到的新聞情緒）
+            await emit_progress("SMC v2 批次分析...", phase="smc_v2_batch")
+            smc_summary = await run_smc_batch(db, progress_cb=emit_progress)
 
             await sse_manager.broadcast("analysis_complete", {
                 "top_picks": result["top_picks"],
                 "summary": result["summary"],
+                "smc_v2": smc_summary,
             })
     except Exception as e:
         await sse_manager.broadcast("analysis_error", {"error": str(e)})
@@ -122,6 +147,7 @@ async def top_picks(analysis_date: date | None = None, n: int = 3, db: AsyncSess
             "signals": r.AnalysisResult.signals,
             "news_summary": r.AnalysisResult.news_summary,
             "entry_suggestion": _get_entry(r.AnalysisResult),
+            "smc_v2": _extract_smc_summary(r.AnalysisResult),
         }
         for r in rows
     ]
@@ -157,6 +183,7 @@ async def latest_analysis(db: AsyncSession = Depends(get_db)):
                 "rsi": float(r.AnalysisResult.rsi or 0),
                 "close_price": float(r.AnalysisResult.close_price or 0),
                 "signals": r.AnalysisResult.signals,
+                "smc_v2": _extract_smc_summary(r.AnalysisResult),
                 "news_summary": r.AnalysisResult.news_summary,
                 "entry_suggestion": _get_entry(r.AnalysisResult),
             }
