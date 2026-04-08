@@ -13,14 +13,14 @@ SMC v2 Worker — 分析 pipeline
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.stock import Stock, PriceHistory
-from ..models.analysis import AnalysisResult
+from ..models.analysis import AnalysisResult, NewsArticle
 from ..schemas.smc import SmcResult, TrendDirection
 from ..services.smc import run_smc_analysis_v2
 from ..services.decision.entry import generate_entry_plan
@@ -34,7 +34,7 @@ async def _load_price_df(
     days: int = 730,
 ) -> pd.DataFrame:
     """從 DB 載入 PriceHistory 並轉成 OHLCV DataFrame。"""
-    cutoff = date.today() - pd.Timedelta(days=days)
+    cutoff = date.today() - timedelta(days=days)
     rows = (await db.execute(
         select(PriceHistory)
         .where(PriceHistory.stock_id == stock_id, PriceHistory.date >= cutoff)
@@ -54,6 +54,20 @@ async def _load_price_df(
     df = pd.DataFrame(data, index=pd.to_datetime([r.date for r in rows]))
     df = df.dropna(subset=["Close"])
     return df
+
+
+async def _load_sentiment(db: AsyncSession, stock_id: int) -> float | None:
+    """從最近 10 篇新聞的 sentiment_score 取平均（0-100），無新聞回傳 None。"""
+    rows = (await db.execute(
+        select(NewsArticle.sentiment_score)
+        .where(NewsArticle.stock_id == stock_id)
+        .order_by(NewsArticle.published_at.desc())
+        .limit(10)
+    )).scalars().all()
+    scores = [float(s) for s in rows if s is not None]
+    if not scores:
+        return None
+    return round(sum(scores) / len(scores), 1)
 
 
 async def run_smc_for_ticker(
@@ -81,11 +95,14 @@ async def run_smc_for_ticker(
     if progress_cb:
         await progress_cb(f"分析 {ticker} SMC...", phase="smc_analysis", ticker=ticker)
 
-    # 2. 載入價格
+    # 2. 載入價格 + 情緒
     df = await _load_price_df(db, stock.id)
     if df.empty or len(df) < 20:
         logger.warning(f"[SMC] {ticker} 價格數據不足 ({len(df)} bars)")
         return None
+
+    if sentiment_score is None:
+        sentiment_score = await _load_sentiment(db, stock.id)
 
     # 3. 跑日線 SMC
     smc_daily = run_smc_analysis_v2(ticker, df, "daily", market)
@@ -204,6 +221,7 @@ async def run_smc_batch(
                 failed += 1
         except Exception as e:
             logger.error(f"[SMC] {stock.ticker} 分析失敗: {e}")
+            await db.rollback()
             failed += 1
 
     return {"completed": completed, "failed": failed, "total": total, "results": results}

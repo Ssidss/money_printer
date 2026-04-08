@@ -72,11 +72,14 @@ def generate_entry_plan(
     entry_price, entry_source = _find_entry(smc, current_price)
 
     # ── 5. 找停損價（用 ATR buffer，不是固定百分比）──
-    current_atr = get_current_atr(closes, highs, lows) if closes and highs and lows else None
+    current_atr = get_current_atr(highs, lows, closes) if closes and highs and lows else None
     stop_price, stop_source = _find_stop(smc, entry_price, current_atr)
 
-    # ── 6. 找目標價 ──
+    # ── 6. 找目標價（找不到用 entry*1.1 估算）──
     target_price, target_source = _find_target(smc, current_price)
+    if target_price is None and entry_price is not None:
+        target_price = round(entry_price * 1.1, 2)
+        target_source = "estimated"
 
     # ── 7. R:R 計算 ──
     rr_ratio = None

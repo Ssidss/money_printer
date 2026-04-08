@@ -9,6 +9,7 @@ API v2 — SMC 驅動的分析 endpoints
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timezone, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -233,7 +234,7 @@ async def smc_trends(db: AsyncSession = Depends(get_db)):
 # ────────────────────────────────────────────────────────────
 # POST /api/v2/smc/analysis/run  —  觸發 SMC 分析
 # ────────────────────────────────────────────────────────────
-_smc_running = False
+_smc_lock = asyncio.Lock()
 
 
 @router.post("/analysis/run")
@@ -247,8 +248,7 @@ async def trigger_smc_analysis(
     - ticker=None → 批次分析所有股票
     - ticker="NVDA" → 只分析單一股票
     """
-    global _smc_running
-    if _smc_running:
+    if _smc_lock.locked():
         return {"message": "SMC 分析已在執行中", "running": True}
 
     if ticker:
@@ -264,53 +264,46 @@ async def trigger_smc_analysis(
 
 @router.get("/analysis/status")
 async def smc_analysis_status():
-    return {"running": _smc_running}
+    return {"running": _smc_lock.locked()}
 
 
 # ── Background task wrappers ──
 
 async def _run_single(ticker: str):
-    global _smc_running
-    _smc_running = True
-    try:
-        async with AsyncSessionLocal() as db:
-            # 找 market
-            stock = (await db.execute(
-                select(Stock).where(Stock.ticker == ticker)
-            )).scalar_one_or_none()
-            if not stock:
-                await sse_manager.broadcast("smc_error", {"error": f"{ticker} not found"})
-                return
+    async with _smc_lock:
+        try:
+            async with AsyncSessionLocal() as db:
+                stock = (await db.execute(
+                    select(Stock).where(Stock.ticker == ticker, Stock.is_active == True)
+                )).scalar_one_or_none()
+                if not stock:
+                    await sse_manager.broadcast("smc_error", {"error": f"{ticker} 未找到或已停用"})
+                    return
 
-            result = await run_smc_for_ticker(
-                db, ticker, stock.market,
-                progress_cb=emit_progress,
-            )
-            if result:
-                await sse_manager.broadcast("smc_complete", {
-                    "ticker": ticker,
-                    "trend": result["smc"].structure.trend.value,
-                    "recommendation": result["entry_plan"].recommendation,
-                })
-            else:
-                await sse_manager.broadcast("smc_error", {"error": f"{ticker} 分析失敗"})
-    except Exception as e:
-        await sse_manager.broadcast("smc_error", {"error": str(e)})
-    finally:
-        _smc_running = False
+                result = await run_smc_for_ticker(
+                    db, ticker, stock.market,
+                    progress_cb=emit_progress,
+                )
+                if result:
+                    await sse_manager.broadcast("smc_complete", {
+                        "ticker": ticker,
+                        "trend": result["smc"].structure.trend.value,
+                        "recommendation": result["entry_plan"].recommendation,
+                    })
+                else:
+                    await sse_manager.broadcast("smc_error", {"error": f"{ticker} 分析失敗"})
+        except Exception as e:
+            await sse_manager.broadcast("smc_error", {"error": str(e)})
 
 
 async def _run_batch():
-    global _smc_running
-    _smc_running = True
-    try:
-        async with AsyncSessionLocal() as db:
-            summary = await run_smc_batch(db, progress_cb=emit_progress)
-            await sse_manager.broadcast("smc_batch_complete", summary)
-    except Exception as e:
-        await sse_manager.broadcast("smc_error", {"error": str(e)})
-    finally:
-        _smc_running = False
+    async with _smc_lock:
+        try:
+            async with AsyncSessionLocal() as db:
+                summary = await run_smc_batch(db, progress_cb=emit_progress)
+                await sse_manager.broadcast("smc_batch_complete", summary)
+        except Exception as e:
+            await sse_manager.broadcast("smc_error", {"error": str(e)})
 
 
 # ── Helpers ──
