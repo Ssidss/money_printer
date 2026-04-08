@@ -177,7 +177,7 @@ export default async function BriefingPage() {
             <ActionItem
               key={w.ticker}
               priority="watch"
-              text={`🎯 關注 ${w.ticker} — 距離進場價 ${w.distance_pct?.toFixed(1)}%，如果開盤拉回到 $${w.entry_suggestion?.entry.toFixed(2)} 附近可進場`}
+              text={`🎯 關注 ${w.ticker} — 距離進場價 ${w.distance_pct?.toFixed(1)}%${w.smc_v2?.entry_price ? `，如果開盤拉回到 $${w.smc_v2.entry_price.toFixed(2)} 附近可進場` : ""}`}
             />
           ))}
           {data.watchlist.filter(w => w.distance_pct !== null && w.distance_pct > 3).map(w => (
@@ -248,7 +248,7 @@ function PortfolioAlertCard({ item: p }: { item: BriefingPortfolioItem }) {
 }
 
 function WatchlistCard({ item: w }: { item: BriefingWatchItem }) {
-  const entry = w.entry_suggestion
+  const sv2 = w.smc_v2
   const isNearEntry = w.distance_pct !== null && w.distance_pct <= 3
   return (
     <div className={`rounded-lg border p-4 ${isNearEntry ? "border-indigo-200 bg-indigo-50/50" : "border-slate-100 bg-white"}`}>
@@ -285,7 +285,7 @@ function WatchlistCard({ item: w }: { item: BriefingWatchItem }) {
         </div>
         <div>
           <span className="text-xs text-slate-400">進場價</span>
-          <p className="font-bold text-indigo-600">${entry?.entry.toFixed(2) ?? "—"}</p>
+          <p className="font-bold text-indigo-600">${sv2?.entry_price?.toFixed(2) ?? "—"}</p>
         </div>
         <div>
           <span className="text-xs text-slate-400">距離</span>
@@ -295,12 +295,12 @@ function WatchlistCard({ item: w }: { item: BriefingWatchItem }) {
         </div>
         <div>
           <span className="text-xs text-slate-400">目標</span>
-          <p className="font-medium text-green-600">${entry?.target.toFixed(2) ?? "—"}</p>
+          <p className="font-medium text-green-600">${sv2?.target_price?.toFixed(2) ?? "—"}</p>
         </div>
         <div>
           <span className="text-xs text-slate-400">R:R</span>
-          <p className={`font-bold ${(entry?.rr ?? 0) >= 2 ? "text-green-600" : "text-yellow-600"}`}>
-            {entry?.rr ?? "—"}x
+          <p className={`font-bold ${(sv2?.rr_ratio ?? 0) >= 2 ? "text-green-600" : "text-yellow-600"}`}>
+            {sv2?.rr_ratio ?? "—"}x
           </p>
         </div>
       </div>

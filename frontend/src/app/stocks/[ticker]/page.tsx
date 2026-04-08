@@ -4,7 +4,7 @@ import { BackButton } from "@/components/stock/BackButton"
 import { AiNotes } from "@/components/stock/AiNotes"
 import { StockActions } from "@/components/stock/StockActions"
 import { ChartControls } from "@/components/stock/ChartControls"
-import type { SmcData } from "@/lib/api"
+import type { SmcData, EntryPlanV2, SmcV2Data } from "@/lib/api"
 
 export const revalidate = 0
 
@@ -13,34 +13,77 @@ const TREND_COLOR: Record<string, string> = {
   "下降趨勢": "text-red-500 bg-red-50 border-red-200",
   "盤整":     "text-yellow-600 bg-yellow-50 border-yellow-200",
   "未知":     "text-slate-500 bg-slate-100 border-slate-200",
+  // v2 trends
+  "uptrend": "text-green-600 bg-green-50 border-green-200",
+  "weak_uptrend": "text-green-500 bg-green-50 border-green-200",
+  "downtrend": "text-red-500 bg-red-50 border-red-200",
+  "weak_downtrend": "text-red-400 bg-red-50 border-red-200",
+  "ranging": "text-yellow-600 bg-yellow-50 border-yellow-200",
+  "insufficient_data": "text-slate-500 bg-slate-100 border-slate-200",
+}
+
+const TREND_LABEL: Record<string, string> = {
+  "uptrend": "上升趨勢", "weak_uptrend": "弱上升",
+  "downtrend": "下降趨勢", "weak_downtrend": "弱下降",
+  "ranging": "盤整", "insufficient_data": "數據不足",
 }
 
 const REC_BADGE: Record<string, string> = {
   "強力推薦": "bg-green-100 text-green-700 border-green-200",
   "推薦":     "bg-blue-100 text-blue-700 border-blue-200",
   "觀察":     "bg-yellow-100 text-yellow-700 border-yellow-200",
+  "觀望":     "bg-slate-100 text-slate-500 border-slate-200",
   "不推薦":   "bg-slate-100 text-slate-500 border-slate-200",
+}
+
+const TIER_LABEL: Record<string, string> = {
+  "核心": "核心持倉 15-20%",
+  "標準": "標準倉位 8-12%",
+  "探索": "探索倉位 3-5%",
+}
+
+const TIER_BADGE: Record<string, string> = {
+  "核心": "bg-green-100 text-green-700 border border-green-200",
+  "標準": "bg-blue-100 text-blue-700 border border-blue-200",
+  "探索": "bg-yellow-100 text-yellow-700 border border-yellow-200",
+}
+
+const ACTION_BADGE: Record<string, string> = {
+  "買入": "bg-green-600 text-white",
+  "等回調": "bg-blue-100 text-blue-700",
+  "觀望": "bg-slate-100 text-slate-600",
+  "不操作": "bg-slate-100 text-slate-400",
 }
 
 export default async function StockDetailPage({ params }: { params: Promise<{ ticker: string }> }) {
   const { ticker } = await params
   const T = ticker.toUpperCase()
 
-  const [barsRes, smcRes, analysisRes, newsRes] = await Promise.allSettled([
+  const [barsRes, smcRes, analysisRes, newsRes, smcV2Res, entryV2Res] = await Promise.allSettled([
     api.stockPrices(T, 120),
     api.stockSmc(T, 120),
     api.stockAnalysis(T),
     api.stockNews(T),
+    api.smcV2(T),
+    api.smcV2Entry(T),
   ])
 
   const bars     = barsRes.status === "fulfilled" ? barsRes.value : []
   const smc: SmcData | null = smcRes.status === "fulfilled" ? smcRes.value : null
   const analysis = analysisRes.status === "fulfilled" ? analysisRes.value : []
   const news     = newsRes.status === "fulfilled" ? newsRes.value : []
+  const smcV2: SmcV2Data | null = smcV2Res.status === "fulfilled" ? smcV2Res.value.smc : null
+  const entryV2: EntryPlanV2 | null = entryV2Res.status === "fulfilled" ? entryV2Res.value.entry_plan : null
+
   const latest   = analysis[analysis.length - 1] ?? null
   const prob     = smc?.probability
   const vp       = smc?.volume_profile
-  const entry    = latest?.entry_suggestion
+
+  // v2 趨勢優先，fallback 到 v1
+  const trend = smcV2?.structure?.trend ?? smc?.structure?.trend ?? null
+  const trendDisplay = TREND_LABEL[trend ?? ""] ?? trend
+  const rec = entryV2?.recommendation ?? latest?.recommendation
+  const ep = entryV2  // v2 entry plan
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -51,22 +94,28 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
           <BackButton />
           <div className="flex items-center gap-3 mt-1">
             <h1 className="text-3xl font-bold text-slate-800">{T}</h1>
-            {smc?.structure?.trend && (
-              <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${TREND_COLOR[smc.structure.trend] ?? TREND_COLOR["未知"]}`}>
-                {smc.structure.trend}
+            {trend && (
+              <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${TREND_COLOR[trend] ?? TREND_COLOR["未知"]}`}>
+                {trendDisplay}
               </span>
             )}
-            {latest?.recommendation && (
-              <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${REC_BADGE[latest.recommendation] ?? REC_BADGE["不推薦"]}`}>
-                {latest.recommendation}
+            {rec && (
+              <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${REC_BADGE[rec] ?? REC_BADGE["不推薦"]}`}>
+                {rec}
+              </span>
+            )}
+            {ep?.action && ep.action !== "不操作" && (
+              <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${ACTION_BADGE[ep.action] ?? ACTION_BADGE["觀望"]}`}>
+                {ep.action}
               </span>
             )}
           </div>
-          {latest && (
+          {(latest || ep) && (
             <p className="text-slate-500 text-sm mt-1">
-              最新收盤 <span className="font-semibold text-slate-700">{latest.close_price}</span>
-              　RSI <span className={`font-medium ${latest.rsi < 35 ? "text-green-600" : latest.rsi > 65 ? "text-red-500" : "text-slate-600"}`}>{latest.rsi?.toFixed(1)}</span>
-              　<span className="text-slate-400">{latest.date}</span>
+              最新收盤 <span className="font-semibold text-slate-700">{ep?.current_price?.toFixed(2) ?? latest?.close_price}</span>
+              {latest?.rsi != null && <>　RSI <span className={`font-medium ${latest.rsi < 35 ? "text-green-600" : latest.rsi > 65 ? "text-red-500" : "text-slate-600"}`}>{latest.rsi?.toFixed(1)}</span></>}
+              {smcV2?.regime?.regime && <span className="text-xs text-slate-400 ml-2">({smcV2.regime.regime})</span>}
+              　<span className="text-slate-400">{latest?.date}</span>
             </p>
           )}
           <div className="mt-2">
@@ -74,8 +123,27 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
           </div>
         </div>
 
-        {/* 走勢機率 */}
-        {prob && (
+        {/* MTF 趨勢摘要（v2）或走勢機率（v1） */}
+        {ep?.mtf ? (
+          <div className="text-right">
+            <p className="text-xs text-slate-400 mb-1">多時間框架</p>
+            <div className="space-y-1">
+              {[
+                { label: "月", trend: ep.mtf.monthly_trend },
+                { label: "週", trend: ep.mtf.weekly_trend },
+                { label: "日", trend: ep.mtf.daily_trend },
+              ].map(({ label, trend: t }) => (
+                <div key={label} className="flex items-center justify-end gap-2">
+                  <span className="text-xs text-slate-400">{label}</span>
+                  <span className={`text-xs font-medium ${t === "up" ? "text-green-600" : t === "down" ? "text-red-500" : "text-yellow-600"}`}>
+                    {t === "up" ? "↑ 上升" : t === "down" ? "↓ 下降" : "↔ 盤整"}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-slate-500 mt-1 font-medium">{ep.mtf.action}</p>
+          </div>
+        ) : prob ? (
           <div className="text-right">
             <p className="text-xs text-slate-400 mb-1">走勢機率</p>
             <div className="flex items-center gap-2">
@@ -89,69 +157,84 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
               {prob.outlook}
             </p>
           </div>
-        )}
+        ) : null}
       </div>
 
-      {/* SMC 驅動進出場建議 */}
-      {entry && latest?.recommendation !== "不推薦" && (
+      {/* SMC v2 進出場建議 */}
+      {ep && ep.entry_price && ep.recommendation !== "不推薦" && (
         <div className="rounded-xl border-2 border-indigo-200 bg-gradient-to-r from-indigo-50 to-white p-5 shadow-sm">
           <div className="flex items-center gap-2 mb-4">
             <span className="text-lg">🎯</span>
             <h3 className="font-semibold text-slate-800">SMC 進出場建議</h3>
-            {entry.position_tier && (
-              <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
-                entry.position_tier === "核心持倉" ? "bg-green-100 text-green-700 border border-green-200" :
-                entry.position_tier === "標準倉位" ? "bg-blue-100 text-blue-700 border border-blue-200" :
-                "bg-yellow-100 text-yellow-700 border border-yellow-200"
-              }`}>
-                {entry.position_tier}
+            {ep.position_tier && ep.position_tier !== "none" && (
+              <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${TIER_BADGE[ep.position_tier] ?? "bg-slate-100 text-slate-600"}`}>
+                {TIER_LABEL[ep.position_tier] ?? ep.position_tier}
               </span>
             )}
-            {entry.entry_basis && (
-              <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-medium">
-                依據: {entry.entry_basis}
-              </span>
-            )}
-            <span className="text-xs text-slate-400 ml-auto">基於 Order Block / FVG / 市場結構計算</span>
+            <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-medium">
+              {ep.entry_source}
+            </span>
+            <span className="text-xs text-slate-400 ml-auto">
+              {ep.conditions_met}/4 條件滿足
+              {ep.sentiment.signal !== "neutral" && (
+                <span className={`ml-1 ${ep.sentiment.signal === "green" ? "text-green-600" : ep.sentiment.signal === "red" ? "text-red-500" : "text-yellow-600"}`}>
+                  | 情緒{ep.sentiment.signal === "green" ? "🟢" : ep.sentiment.signal === "red" ? "🔴" : "🟡"}
+                </span>
+              )}
+            </span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="rounded-lg bg-indigo-100/60 border border-indigo-200 p-4 text-center">
               <p className="text-xs text-indigo-500 font-medium uppercase tracking-wide mb-1">建議買入價</p>
-              <p className="text-2xl font-bold text-indigo-700">{entry.entry.toFixed(2)}</p>
-              {latest.close_price && (
+              <p className="text-2xl font-bold text-indigo-700">{ep.entry_price.toFixed(2)}</p>
+              {ep.distance_to_entry_pct != null && (
                 <p className="text-xs text-indigo-400 mt-1">
-                  {entry.entry < latest.close_price
-                    ? `低於現價 ${((1 - entry.entry / latest.close_price) * 100).toFixed(1)}%`
-                    : "接近現價"
+                  {ep.distance_to_entry_pct > 0
+                    ? `現價高 ${ep.distance_to_entry_pct.toFixed(1)}%`
+                    : `低於現價 ${Math.abs(ep.distance_to_entry_pct).toFixed(1)}%`
                   }
                 </p>
               )}
             </div>
             <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-center">
               <p className="text-xs text-red-500 font-medium uppercase tracking-wide mb-1">停損價</p>
-              <p className="text-2xl font-bold text-red-600">{entry.stop.toFixed(2)}</p>
-              <p className="text-xs text-red-400 mt-1">
-                風險 -{entry.risk_pct ?? ((1 - entry.stop / entry.entry) * 100).toFixed(1)}%
-              </p>
+              <p className="text-2xl font-bold text-red-600">{ep.stop_price?.toFixed(2) ?? "—"}</p>
+              {ep.entry_price && ep.stop_price && (
+                <p className="text-xs text-red-400 mt-1">
+                  風險 -{((1 - ep.stop_price / ep.entry_price) * 100).toFixed(1)}%
+                  <span className="text-slate-400 ml-1">({ep.stop_source})</span>
+                </p>
+              )}
             </div>
             <div className="rounded-lg bg-green-50 border border-green-200 p-4 text-center">
               <p className="text-xs text-green-600 font-medium uppercase tracking-wide mb-1">目標價</p>
-              <p className="text-2xl font-bold text-green-600">{entry.target.toFixed(2)}</p>
-              <p className="text-xs text-green-500 mt-1">
-                獲利 +{entry.reward_pct ?? ((entry.target / entry.entry - 1) * 100).toFixed(1)}%
-                {entry.target_basis && <span className="text-slate-400 ml-1">({entry.target_basis})</span>}
-              </p>
+              <p className="text-2xl font-bold text-green-600">{ep.target_price?.toFixed(2) ?? "—"}</p>
+              {ep.entry_price && ep.target_price && (
+                <p className="text-xs text-green-500 mt-1">
+                  獲利 +{((ep.target_price / ep.entry_price - 1) * 100).toFixed(1)}%
+                  <span className="text-slate-400 ml-1">({ep.target_source})</span>
+                </p>
+              )}
             </div>
             <div className="rounded-lg bg-slate-50 border border-slate-200 p-4 text-center">
               <p className="text-xs text-slate-500 font-medium uppercase tracking-wide mb-1">風報比 R:R</p>
-              <p className={`text-2xl font-bold ${entry.rr >= 2 ? "text-green-600" : entry.rr >= 1.5 ? "text-yellow-600" : "text-red-500"}`}>
-                {entry.rr}x
+              <p className={`text-2xl font-bold ${(ep.rr_ratio ?? 0) >= 2 ? "text-green-600" : (ep.rr_ratio ?? 0) >= 1.5 ? "text-yellow-600" : "text-red-500"}`}>
+                {ep.rr_ratio ? `${ep.rr_ratio}x` : "—"}
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                {entry.rr >= 2 ? "優秀" : entry.rr >= 1.5 ? "可接受" : "偏低"}
+                {(ep.rr_ratio ?? 0) >= 2 ? "優秀" : (ep.rr_ratio ?? 0) >= 1.5 ? "可接受" : "偏低"}
               </p>
             </div>
           </div>
+          {ep.warnings.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {ep.warnings.map((w, i) => (
+                <span key={i} className="text-xs bg-yellow-50 text-yellow-700 border border-yellow-200 px-2 py-0.5 rounded">
+                  ⚠ {w}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -188,61 +271,102 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
             </div>
           )}
 
-          {/* Order Blocks */}
-          {smc?.order_blocks && smc.order_blocks.length > 0 && (
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="font-semibold text-slate-800 mb-3">🧱 Order Blocks</h3>
-              <p className="text-xs text-slate-400 mb-3">機構買賣的原始區域，未被補回的 OB 是強力支撐/壓力</p>
-              <div className="space-y-2">
-                {smc.order_blocks.filter(ob => !ob.mitigated).slice(0, 6).map((ob, i) => (
-                  <div key={i} className={`flex items-center gap-3 rounded-lg p-3 border ${ob.type === "bullish" ? "bg-green-50 border-green-100" : "bg-red-50 border-red-100"}`}>
-                    <span className="text-lg">{ob.type === "bullish" ? "🟢" : "🔴"}</span>
-                    <div className="flex-1">
-                      <p className="text-xs text-slate-500">{ob.date}</p>
-                      <p className="text-sm font-medium text-slate-700">
-                        {ob.bottom.toFixed(2)} ~ {ob.top.toFixed(2)}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-slate-400">移動強度</p>
-                      <p className={`text-sm font-bold ${ob.type === "bullish" ? "text-green-600" : "text-red-500"}`}>+{ob.strength}%</p>
-                    </div>
-                    <span className={`text-xs px-2 py-0.5 rounded ${ob.type === "bullish" ? "bg-green-100 text-green-600" : "bg-red-100 text-red-500"}`}>
-                      {ob.type === "bullish" ? "支撐" : "壓力"}
-                    </span>
-                  </div>
-                ))}
+          {/* Order Blocks（v2 優先） */}
+          {(() => {
+            const v2obs = smcV2 ? [...(smcV2.order_blocks.active_bullish ?? []), ...(smcV2.order_blocks.active_bearish ?? [])] : []
+            const v1obs = smc?.order_blocks?.filter(ob => !ob.mitigated) ?? []
+            const hasObs = v2obs.length > 0 || v1obs.length > 0
+            if (!hasObs) return null
+            return (
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="font-semibold text-slate-800 mb-3">🧱 Order Blocks</h3>
+                <p className="text-xs text-slate-400 mb-3">機構買賣的原始區域，未被補回的 OB 是強力支撐/壓力</p>
+                <div className="space-y-2">
+                  {v2obs.length > 0 ? (
+                    v2obs.sort((a, b) => b.score - a.score).slice(0, 6).map((ob, i) => (
+                      <div key={i} className={`flex items-center gap-3 rounded-lg p-3 border ${ob.type === "bullish" ? "bg-green-50 border-green-100" : "bg-red-50 border-red-100"}`}>
+                        <span className="text-lg">{ob.type === "bullish" ? "🟢" : "🔴"}</span>
+                        <div className="flex-1">
+                          <p className="text-xs text-slate-500">{ob.date?.split(" ")[0]}</p>
+                          <p className="text-sm font-medium text-slate-700">
+                            {ob.bottom.toFixed(2)} ~ {ob.top.toFixed(2)}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-slate-400">OB 評分</p>
+                          <p className={`text-sm font-bold ${ob.score >= 7 ? "text-green-600" : ob.score >= 5 ? "text-blue-600" : "text-slate-600"}`}>{ob.score.toFixed(1)}/10</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-slate-400">{ob.retests > 0 ? `${ob.retests}次回測` : ob.status}</p>
+                        </div>
+                        <span className={`text-xs px-2 py-0.5 rounded ${ob.type === "bullish" ? "bg-green-100 text-green-600" : "bg-red-100 text-red-500"}`}>
+                          {ob.type === "bullish" ? "支撐" : "壓力"}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    v1obs.slice(0, 6).map((ob, i) => (
+                      <div key={i} className={`flex items-center gap-3 rounded-lg p-3 border ${ob.type === "bullish" ? "bg-green-50 border-green-100" : "bg-red-50 border-red-100"}`}>
+                        <span className="text-lg">{ob.type === "bullish" ? "🟢" : "🔴"}</span>
+                        <div className="flex-1">
+                          <p className="text-xs text-slate-500">{ob.date}</p>
+                          <p className="text-sm font-medium text-slate-700">
+                            {ob.bottom.toFixed(2)} ~ {ob.top.toFixed(2)}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-slate-400">移動強度</p>
+                          <p className={`text-sm font-bold ${ob.type === "bullish" ? "text-green-600" : "text-red-500"}`}>+{ob.strength}%</p>
+                        </div>
+                        <span className={`text-xs px-2 py-0.5 rounded ${ob.type === "bullish" ? "bg-green-100 text-green-600" : "bg-red-100 text-red-500"}`}>
+                          {ob.type === "bullish" ? "支撐" : "壓力"}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
 
-          {/* Fair Value Gaps */}
-          {smc?.fvg && smc.fvg.filter(f => !f.filled).length > 0 && (
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="font-semibold text-slate-800 mb-3">🕳 Fair Value Gaps</h3>
-              <p className="text-xs text-slate-400 mb-3">價格快速移動留下的缺口，市場有高機率回補</p>
-              <div className="space-y-2">
-                {smc.fvg.filter(f => !f.filled).slice(0, 6).map((f, i) => (
-                  <div key={i} className={`flex items-center gap-3 rounded-lg p-3 border ${f.type === "bullish" ? "bg-indigo-50 border-indigo-100" : "bg-orange-50 border-orange-100"}`}>
-                    <span className="text-lg">{f.type === "bullish" ? "↑" : "↓"}</span>
-                    <div className="flex-1">
-                      <p className="text-xs text-slate-500">{f.date}</p>
-                      <p className="text-sm font-medium text-slate-700">
-                        {f.bottom.toFixed(2)} ~ {f.top.toFixed(2)}
-                      </p>
+          {/* Fair Value Gaps（v2 優先） */}
+          {(() => {
+            const v2fvgs = smcV2?.fvg?.active ?? []
+            const v1fvgs = smc?.fvg?.filter(f => !f.filled) ?? []
+            const fvgs = v2fvgs.length > 0 ? v2fvgs : v1fvgs
+            if (fvgs.length === 0) return null
+            return (
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="font-semibold text-slate-800 mb-3">🕳 Fair Value Gaps</h3>
+                <p className="text-xs text-slate-400 mb-3">價格快速移動留下的缺口，市場有高機率回補</p>
+                <div className="space-y-2">
+                  {fvgs.slice(0, 6).map((f, i) => (
+                    <div key={i} className={`flex items-center gap-3 rounded-lg p-3 border ${f.type === "bullish" ? "bg-indigo-50 border-indigo-100" : "bg-orange-50 border-orange-100"}`}>
+                      <span className="text-lg">{f.type === "bullish" ? "↑" : "↓"}</span>
+                      <div className="flex-1">
+                        <p className="text-xs text-slate-500">{typeof f.date === "string" ? f.date.split(" ")[0] : f.date}</p>
+                        <p className="text-sm font-medium text-slate-700">
+                          {f.bottom.toFixed(2)} ~ {f.top.toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-slate-400">缺口大小</p>
+                        <p className={`text-sm font-bold ${f.type === "bullish" ? "text-indigo-600" : "text-orange-600"}`}>{f.gap_pct}%</p>
+                      </div>
+                      {"grade" in f && (
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${f.grade === "A" ? "bg-green-100 text-green-700" : f.grade === "B" ? "bg-blue-100 text-blue-600" : "bg-slate-100 text-slate-500"}`}>
+                          {f.grade}
+                        </span>
+                      )}
+                      <span className={`text-xs px-2 py-0.5 rounded ${f.type === "bullish" ? "bg-indigo-100 text-indigo-600" : "bg-orange-100 text-orange-600"}`}>
+                        {f.type === "bullish" ? "上行缺口" : "下行缺口"}
+                      </span>
                     </div>
-                    <div className="text-right">
-                      <p className="text-xs text-slate-400">缺口大小</p>
-                      <p className={`text-sm font-bold ${f.type === "bullish" ? "text-indigo-600" : "text-orange-600"}`}>{f.gap_pct}%</p>
-                    </div>
-                    <span className={`text-xs px-2 py-0.5 rounded ${f.type === "bullish" ? "bg-indigo-100 text-indigo-600" : "bg-orange-100 text-orange-600"}`}>
-                      {f.type === "bullish" ? "上行缺口" : "下行缺口"}
-                    </span>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
 
           {/* 最新技術分析訊號 */}
           {latest?.signals && (
