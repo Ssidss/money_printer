@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react"
 import Link from "next/link"
-import type { TopPick, Stock, EntrySuggestion, AiNoteLatest } from "@/lib/api"
+import type { TopPick, Stock, EntrySuggestion, AiNoteLatest, SmcTrendMTF } from "@/lib/api"
 import { RemoveStockButton } from "./RemoveStockButton"
 
 type MergedStock = Stock & Partial<TopPick>
@@ -22,11 +22,24 @@ const REC_ORDER: Record<string, number> = {
   "強力推薦": 4, "推薦": 3, "觀察": 2, "不推薦": 1,
 }
 
+// v2 English → Chinese label
+const TREND_LABEL: Record<string, string> = {
+  uptrend: "上升", weak_uptrend: "弱上升", downtrend: "下降",
+  weak_downtrend: "弱下降", ranging: "盤整", range: "盤整",
+  "上升趨勢": "上升", "下降趨勢": "下降", "盤整": "盤整",
+}
+
 const TREND_STYLE: Record<string, string> = {
-  "上升趨勢": "bg-green-100 text-green-700",
-  "下降趨勢": "bg-red-100 text-red-500",
-  "盤整":     "bg-yellow-100 text-yellow-700",
-  "未知":     "bg-slate-100 text-slate-400",
+  "上升": "bg-green-100 text-green-700",
+  "弱上升": "bg-green-50 text-green-600",
+  "下降": "bg-red-100 text-red-500",
+  "弱下降": "bg-red-50 text-red-400",
+  "盤整": "bg-yellow-100 text-yellow-700",
+  "未知": "bg-slate-100 text-slate-400",
+}
+
+const TREND_ICON: Record<string, string> = {
+  "上升": "↑", "弱上升": "↗", "下降": "↓", "弱下降": "↘", "盤整": "↔",
 }
 
 function ScoreBar({ value }: { value: number }) {
@@ -42,16 +55,49 @@ function ScoreBar({ value }: { value: number }) {
 }
 
 function TrendBadge({ trend }: { trend?: string }) {
-  const t = trend ?? "未知"
-  const icon = t === "上升趨勢" ? "↑" : t === "下降趨勢" ? "↓" : "↔"
+  const label = TREND_LABEL[trend ?? ""] ?? "未知"
+  const icon = TREND_ICON[label] ?? "?"
   return (
-    <span className={`inline-flex items-center gap-0.5 text-xs px-2 py-0.5 rounded font-medium ${TREND_STYLE[t] ?? TREND_STYLE["未知"]}`}>
-      {icon} {t}
+    <span className={`inline-flex items-center gap-0.5 text-xs px-2 py-0.5 rounded font-medium ${TREND_STYLE[label] ?? TREND_STYLE["未知"]}`}>
+      {icon} {label}
     </span>
   )
 }
 
-function EntryCell({ es, rec }: { es?: EntrySuggestion | null; rec?: string }) {
+function EntryCell({ es, rec, v2 }: { es?: EntrySuggestion | null; rec?: string; v2?: TopPick["smc_v2"] }) {
+  // Prefer v2 entry data
+  if (v2?.entry_price && v2?.stop_price && v2?.target_price) {
+    return (
+      <div className="text-xs space-y-0.5 text-right">
+        <div>
+          <span className="text-slate-400">買：</span>
+          <span className="font-semibold text-indigo-600">{v2.entry_price.toFixed(2)}</span>
+        </div>
+        <div>
+          <span className="text-slate-400">停：</span>
+          <span className="font-medium text-red-500">{v2.stop_price.toFixed(2)}</span>
+        </div>
+        <div>
+          <span className="text-slate-400">目：</span>
+          <span className="font-medium text-green-600">{v2.target_price.toFixed(2)}</span>
+        </div>
+        {v2.rr_ratio && (
+          <div className={`font-medium ${v2.rr_ratio >= 2 ? "text-green-600" : v2.rr_ratio >= 1.5 ? "text-yellow-600" : "text-slate-400"}`}>
+            R:R {v2.rr_ratio.toFixed(2)}x
+          </div>
+        )}
+        {v2.position_tier && (
+          <div className={`font-bold ${
+            v2.position_tier === "核心持倉" ? "text-green-600" :
+            v2.position_tier === "標準倉位" ? "text-blue-600" :
+            "text-yellow-600"
+          }`}>{v2.position_tier === "核心持倉" ? "🟢 核心" : v2.position_tier === "標準倉位" ? "🔵 標準" : "🟡 探索"}</div>
+        )}
+      </div>
+    )
+  }
+
+  // Fallback to v1
   if (!es) {
     return <span className="text-slate-300 text-xs">待分析</span>
   }
@@ -112,12 +158,12 @@ function timeAgo(dateStr: string): string {
 
 interface Props {
   stocks: MergedStock[]
-  trends: Record<string, string>
+  trendsMTF: Record<string, SmcTrendMTF>
   analysisDone: boolean
   aiNotes?: Record<string, AiNoteLatest>
 }
 
-export function StocksTable({ stocks, trends, analysisDone, aiNotes = {} }: Props) {
+export function StocksTable({ stocks, trendsMTF, analysisDone, aiNotes = {} }: Props) {
   const [market, setMarket] = useState<Market>("ALL")
   const [sortKey, setSortKey] = useState<SortKey>("composite_score")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
@@ -225,8 +271,9 @@ export function StocksTable({ stocks, trends, analysisDone, aiNotes = {} }: Prop
                   <th className={`text-center ${thClass}`} onClick={() => toggleSort("recommendation")}>
                     推薦 <SortIcon active={sortKey === "recommendation"} dir={sortDir} />
                   </th>
+                  <th className="text-center px-4 py-3">建議操作</th>
                   <th className="text-right px-4 py-3 min-w-[110px]">
-                    <span className="text-indigo-500">量化建議</span>
+                    <span className="text-indigo-500">進出場</span>
                     <div className="text-slate-300 font-normal normal-case">買 / 停 / 目標</div>
                   </th>
                   <th className="text-center px-4 py-3 min-w-[90px]">
@@ -239,6 +286,10 @@ export function StocksTable({ stocks, trends, analysisDone, aiNotes = {} }: Prop
               <tbody>
                 {sorted.map((s) => {
                   const hasAnalysis = s.composite_score !== undefined
+                  const mtf = trendsMTF[s.ticker]
+                  const v2rec = mtf?.recommendation ?? s.smc_v2?.recommendation
+                  const v2action = mtf?.action ?? s.smc_v2?.action
+                  const displayRec = v2rec ?? s.recommendation
                   return (
                     <tr key={s.ticker} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
                       <td className="px-4 py-3">
@@ -273,10 +324,14 @@ export function StocksTable({ stocks, trends, analysisDone, aiNotes = {} }: Prop
                         {s.rsi !== undefined ? s.rsi.toFixed(1) : "—"}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <TrendBadge trend={trends[s.ticker]} />
+                        <TrendBadge trend={mtf?.daily} />
                       </td>
                       <td className="px-4 py-3 text-center">
-                        {hasAnalysis ? (
+                        {displayRec ? (
+                          <span className={`text-xs px-2 py-0.5 rounded font-medium ${REC_BADGE[displayRec] ?? REC_BADGE["不推薦"]}`}>
+                            {displayRec}
+                          </span>
+                        ) : hasAnalysis ? (
                           <span className={`text-xs px-2 py-0.5 rounded font-medium ${REC_BADGE[s.recommendation!] ?? REC_BADGE["不推薦"]}`}>
                             {s.recommendation}
                           </span>
@@ -284,10 +339,20 @@ export function StocksTable({ stocks, trends, analysisDone, aiNotes = {} }: Prop
                           <span className="text-xs text-slate-300">待分析</span>
                         )}
                       </td>
+                      <td className="px-4 py-3 text-center">
+                        {v2action ? (
+                          <span className={`text-xs px-2 py-0.5 rounded font-medium ${ACTION_BADGE[v2action] ?? "bg-slate-100 text-slate-500"}`}>
+                            {v2action}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-300">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         <EntryCell
                           es={s.entry_suggestion}
                           rec={s.recommendation}
+                          v2={s.smc_v2}
                         />
                       </td>
                       <td className="px-4 py-3 text-center">

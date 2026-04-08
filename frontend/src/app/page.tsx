@@ -2,7 +2,7 @@ import Link from "next/link"
 import { api } from "@/lib/api"
 import { AnalyzeButton } from "@/components/dashboard/AnalyzeButton"
 import { TopPickCard } from "@/components/dashboard/TopPickCard"
-import type { TopPick } from "@/lib/api"
+import type { TopPick, SmcTrendMTF } from "@/lib/api"
 
 export const revalidate = 60
 
@@ -13,11 +13,35 @@ const REC_BADGE: Record<string, string> = {
   "不推薦":   "bg-slate-100 text-slate-500",
 }
 
+const ACTION_BADGE: Record<string, string> = {
+  "買入": "bg-green-100 text-green-700",
+  "加碼": "bg-green-50 text-green-600",
+  "持有": "bg-blue-50 text-blue-600",
+  "減倉": "bg-orange-100 text-orange-600",
+  "出場": "bg-red-100 text-red-600",
+  "觀望": "bg-slate-100 text-slate-500",
+  "等回調": "bg-amber-50 text-amber-600",
+  "不操作": "bg-slate-100 text-slate-400",
+}
+
+// v2 English → Chinese label mapping
+const TREND_LABEL: Record<string, string> = {
+  uptrend: "上升", weak_uptrend: "弱上升", downtrend: "下降",
+  weak_downtrend: "弱下降", ranging: "盤整", range: "盤整",
+  "上升趨勢": "上升", "下降趨勢": "下降", "盤整": "盤整",
+}
+
 const TREND_STYLE: Record<string, string> = {
-  "上升趨勢": "bg-green-100 text-green-700",
-  "下降趨勢": "bg-red-100 text-red-500",
-  "盤整":     "bg-yellow-100 text-yellow-700",
-  "未知":     "bg-slate-100 text-slate-400",
+  "上升": "bg-green-100 text-green-700",
+  "弱上升": "bg-green-50 text-green-600",
+  "下降": "bg-red-100 text-red-500",
+  "弱下降": "bg-red-50 text-red-400",
+  "盤整": "bg-yellow-100 text-yellow-700",
+  "未知": "bg-slate-100 text-slate-400",
+}
+
+const TREND_ICON: Record<string, string> = {
+  "上升": "↑", "弱上升": "↗", "下降": "↓", "弱下降": "↘", "盤整": "↔",
 }
 
 function ScorePill({ value }: { value: number }) {
@@ -26,12 +50,36 @@ function ScorePill({ value }: { value: number }) {
 }
 
 function TrendBadge({ trend }: { trend?: string }) {
-  const t = trend ?? "未知"
-  const icon = t === "上升趨勢" ? "↑" : t === "下降趨勢" ? "↓" : "↔"
+  const label = TREND_LABEL[trend ?? ""] ?? "未知"
+  const icon = TREND_ICON[label] ?? "?"
   return (
-    <span className={`inline-flex items-center gap-0.5 text-xs px-2 py-0.5 rounded font-medium ${TREND_STYLE[t] ?? TREND_STYLE["未知"]}`}>
-      {icon} {t}
+    <span className={`inline-flex items-center gap-0.5 text-xs px-2 py-0.5 rounded font-medium ${TREND_STYLE[label] ?? TREND_STYLE["未知"]}`}>
+      {icon} {label}
     </span>
+  )
+}
+
+function MTFMini({ mtf }: { mtf: SmcTrendMTF }) {
+  const frames = [
+    { label: "月", trend: mtf.monthly },
+    { label: "週", trend: mtf.weekly },
+    { label: "日", trend: mtf.daily },
+  ]
+  return (
+    <div className="flex items-center gap-1">
+      {frames.map(f => {
+        const lbl = TREND_LABEL[f.trend] ?? "未知"
+        const icon = TREND_ICON[lbl] ?? "?"
+        const color = lbl.includes("上升") || lbl === "弱上升" ? "text-green-600"
+          : lbl.includes("下降") || lbl === "弱下降" ? "text-red-500"
+          : "text-yellow-600"
+        return (
+          <span key={f.label} className={`text-xs ${color}`} title={`${f.label}線: ${lbl}`}>
+            {f.label}{icon}
+          </span>
+        )
+      })}
+    </div>
   )
 }
 
@@ -41,14 +89,14 @@ export default async function Dashboard() {
     api.latestAnalysis(),
     api.holdings(),
     api.analysisStatus(),
-    api.smcTrends(),
+    api.smcTrendsMTF(),
   ])
 
   const topPicks     = picks.status === "fulfilled" ? picks.value : []
   const latestRes    = latest.status === "fulfilled" ? latest.value : null
   const holdingsList = holdings.status === "fulfilled" ? holdings.value : []
   const isRunning    = statusRes.status === "fulfilled" ? statusRes.value.running : false
-  const trends       = trendsRes.status === "fulfilled" ? trendsRes.value : {} as Record<string, string>
+  const trendsMTF    = trendsRes.status === "fulfilled" ? trendsRes.value : {} as Record<string, SmcTrendMTF>
   const allStocks: TopPick[] = latestRes?.results ?? []
 
   // 建立 ticker → close_price 的映射
@@ -117,13 +165,15 @@ export default async function Dashboard() {
                   <th className="text-right px-4 py-3">停損</th>
                   <th className="text-right px-4 py-3">停利</th>
                   <th className="text-center px-4 py-3">SMC 趨勢</th>
+                  <th className="text-center px-4 py-3">MTF</th>
+                  <th className="text-center px-4 py-3">建議</th>
                 </tr>
               </thead>
               <tbody>
                 {holdingsList.map((h) => {
                   const curr = priceMap[h.ticker]
                   const pnlPct = curr ? ((curr - h.avg_cost) / h.avg_cost * 100) : null
-                  const trend = trends[h.ticker]
+                  const mtf = trendsMTF[h.ticker]
                   const isNearStop = curr && curr <= h.stop_loss_price * 1.03
                   return (
                     <tr key={h.ticker} className={`border-t border-slate-100 hover:bg-slate-50 ${isNearStop ? "bg-red-50/50" : ""}`}>
@@ -144,7 +194,17 @@ export default async function Dashboard() {
                       <td className="px-4 py-3 text-right text-red-500">{h.stop_loss_price.toFixed(2)}</td>
                       <td className="px-4 py-3 text-right text-green-600">{h.take_profit_price.toFixed(2)}</td>
                       <td className="px-4 py-3 text-center">
-                        <TrendBadge trend={trend} />
+                        <TrendBadge trend={mtf?.daily} />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {mtf && <MTFMini mtf={mtf} />}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {mtf?.action && (
+                          <span className={`text-xs px-2 py-0.5 rounded font-medium ${ACTION_BADGE[mtf.action] ?? "bg-slate-100 text-slate-500"}`}>
+                            {mtf.action}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   )
@@ -179,10 +239,16 @@ export default async function Dashboard() {
                   <th className="text-right px-4 py-3">RSI</th>
                   <th className="text-center px-4 py-3">SMC 趨勢</th>
                   <th className="text-center px-4 py-3">推薦</th>
+                  <th className="text-center px-4 py-3">建議操作</th>
                 </tr>
               </thead>
               <tbody>
-                {allStocks.map((s, i) => (
+                {allStocks.map((s, i) => {
+                  const mtf = trendsMTF[s.ticker]
+                  const v2rec = mtf?.recommendation ?? s.smc_v2?.recommendation
+                  const v2action = mtf?.action ?? s.smc_v2?.action
+                  const displayRec = v2rec ?? s.recommendation
+                  return (
                   <tr key={s.ticker} className={`border-t border-slate-100 hover:bg-slate-50 transition-colors ${i < 3 ? "bg-amber-50/40" : ""}`}>
                     <td className="px-4 py-3">
                       {i < 3 && <span className="mr-1">{["🥇","🥈","🥉"][i]}</span>}
@@ -201,15 +267,23 @@ export default async function Dashboard() {
                       {s.rsi?.toFixed(1)}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <TrendBadge trend={trends[s.ticker]} />
+                      <TrendBadge trend={mtf?.daily} />
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${REC_BADGE[s.recommendation] ?? REC_BADGE["不推薦"]}`}>
-                        {s.recommendation}
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${REC_BADGE[displayRec] ?? REC_BADGE["不推薦"]}`}>
+                        {displayRec}
                       </span>
                     </td>
+                    <td className="px-4 py-3 text-center">
+                      {v2action && (
+                        <span className={`text-xs px-2 py-0.5 rounded font-medium ${ACTION_BADGE[v2action] ?? "bg-slate-100 text-slate-500"}`}>
+                          {v2action}
+                        </span>
+                      )}
+                    </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
