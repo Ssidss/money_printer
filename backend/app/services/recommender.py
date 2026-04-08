@@ -21,7 +21,7 @@ from ..models.stock import Stock
 from ..models.analysis import AnalysisResult, NewsArticle
 from .technical import analyze_stock, load_price_df
 from .sentiment import aggregate_sentiment
-from .smc import find_structure, run_smc_analysis, compute_smc_entry
+from .smc import find_structure, run_smc_analysis, run_mtf_smc_analysis, compute_smc_entry
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +33,78 @@ POSITION_TIERS = {
 }
 
 
+def _compute_composite(
+    signals_met: int,
+    rr: float | None,
+    current_price: float | None,
+    stop_price: float | None,
+    target_price: float | None,
+) -> float:
+    """
+    新版綜合分（v3）— 直接反映交易品質
+
+    綜合分 = 條件分(0~50) + 風報比分(0~30) + 位置分(0~20) = 0~100
+
+    條件分: 每滿足一個條件 +10 分（SMC/動量/催化劑/R:R/MTF）
+    風報比分: R:R 越高分越高，< 1.0 = 0 分
+    位置分: 現價離目標越近（已沒肉）或離停損越近（很危險）= 低分
+    """
+    # 1. 條件分 (0-50)
+    condition_score = max(0, min(5, signals_met)) * 10
+
+    # 2. 風報比分 (0-30)
+    if rr is None or rr <= 0:
+        rr_score = 0
+    elif rr >= 4.0:
+        rr_score = 30
+    elif rr >= 3.0:
+        rr_score = 25
+    elif rr >= 2.0:
+        rr_score = 20
+    elif rr >= 1.5:
+        rr_score = 12
+    elif rr >= 1.0:
+        rr_score = 5
+    else:
+        rr_score = 0
+
+    # 3. 位置分 (0-20): 現價在停損~目標之間的位置
+    #    越接近停損 = 越危險 = 低分
+    #    越多上升空間 = 高分
+    position_score = 10  # 預設（缺少資料時給中間值）
+    if current_price and stop_price and target_price and target_price > stop_price:
+        upside = target_price - current_price   # 剩餘上升空間
+        downside = current_price - stop_price   # 離停損距離
+        total_range = target_price - stop_price
+
+        if downside <= 0:
+            position_score = 0   # 已跌破停損！
+        elif upside <= 0:
+            position_score = 3   # 已超過目標，沒什麼肉了
+        else:
+            # 上升空間佔總範圍的比例 × 20
+            position_score = round((upside / total_range) * 20)
+            position_score = max(0, min(20, position_score))
+
+    composite = condition_score + rr_score + position_score
+    return float(max(0, min(100, composite)))
+
+
 def _layered_decision(
     smc_trend: str,
     momentum_score: float,
     catalyst: str,       # "加速" / "中性" / "警告"
     rr: float | None,    # 風報比
+    mtf: dict | None = None,  # MTF 對齊結果
+    current_price: float | None = None,
+    stop_price: float | None = None,
+    target_price: float | None = None,
 ) -> dict:
     """
-    分層決策引擎（取代加權平均）
+    分層決策引擎（v3）+ 多時間框架確認
+
+    綜合分 = 條件分(0~50) + 風報比分(0~30) + 位置分(0~20)
+    推薦等級 = 由條件計數決定
 
     Returns:
         {
@@ -51,12 +115,39 @@ def _layered_decision(
             "reason": str,
         }
     """
-    # ── Layer 1: SMC 門檻 ─────────────────────────────────
-    if smc_trend == "下降趨勢":
+    mtf = mtf or {}
+    mtf_tradable = mtf.get("tradable", True)
+    mtf_score_adj = mtf.get("score_adj", 0)
+    mtf_alignment = mtf.get("alignment", "")
+    mtf_confidence = mtf.get("confidence", "低")
+
+    # ── Layer 0: MTF 門檻（高時間框架否決權）──────────────
+    if not mtf_tradable and mtf_alignment in ("三重下降", "逆勢反彈"):
+        composite = _compute_composite(0, rr, current_price, stop_price, target_price)
         return {
             "recommendation": "不推薦",
             "position_tier": None,
-            "composite_score": round(momentum_score * 0.5, 1),  # 壓低分數但保留資訊
+            "composite_score": composite,
+            "signals_met": 0,
+            "reason": f"MTF {mtf_alignment}，高時間框架不支持做多",
+        }
+
+    # ── Layer 1: SMC 日線門檻 ─────────────────────────────
+    if smc_trend == "下降趨勢":
+        if mtf_tradable and mtf_score_adj > 0:
+            composite = _compute_composite(1, rr, current_price, stop_price, target_price)
+            return {
+                "recommendation": "觀察",
+                "position_tier": "探索倉位",
+                "composite_score": composite,
+                "signals_met": 1,
+                "reason": f"日線下降但{mtf_alignment}，等日線止穩",
+            }
+        composite = _compute_composite(0, rr, current_price, stop_price, target_price)
+        return {
+            "recommendation": "不推薦",
+            "position_tier": None,
+            "composite_score": composite,
             "signals_met": 0,
             "reason": "SMC 下降結構，不做多",
         }
@@ -95,24 +186,22 @@ def _layered_decision(
         # 可接受但不加分
         pass
 
-    # ── 決策 ──────────────────────────────────────────────
-    # 計算綜合分（保留用於排序，但不再驅動推薦等級）
-    # 基礎分 = 動量分，根據條件數微調
-    base = momentum_score
-    if smc_trend == "上升趨勢":
-        base = min(base * 1.10, 100)
-    elif smc_trend == "盤整":
-        base = base * 0.92
+    # 條件 5: MTF 對齊
+    if mtf_confidence == "高" and mtf_score_adj > 0:
+        signals_met += 1
+        reasons.append(f"MTF {mtf_alignment}")
+    elif not mtf_tradable:
+        signals_met -= 1
+        reasons.append(f"MTF 警告：{mtf_alignment}")
 
-    if catalyst == "加速":
-        base = min(base * 1.05, 100)
-    elif catalyst == "警告":
-        base = base * 0.90
+    # ── 綜合分（新公式 v3）────────────────────────────────
+    composite = _compute_composite(signals_met, rr, current_price, stop_price, target_price)
 
-    composite = round(base, 1)
-
-    # 推薦等級 + 倉位（由條件計數決定）
-    if signals_met >= 4:
+    # ── 推薦等級 + 倉位（由條件計數決定）─────────────────
+    if signals_met >= 5:
+        rec = "強力推薦"
+        tier = "核心持倉"
+    elif signals_met >= 4:
         rec = "強力推薦"
         tier = "核心持倉"
     elif signals_met >= 3:
@@ -128,6 +217,11 @@ def _layered_decision(
     # 盤整中即使條件夠多，最高只到「標準倉位」
     if smc_trend == "盤整" and tier == "核心持倉":
         tier = "標準倉位"
+
+    # MTF 不可交易時，最高只到「探索倉位」
+    if not mtf_tradable and tier in ("核心持倉", "標準倉位"):
+        tier = "探索倉位"
+        rec = "觀察"
 
     return {
         "recommendation": rec,
@@ -180,21 +274,35 @@ async def run_analysis_for_stock(
     sentiment = aggregate_sentiment(sentiment_scores)
     catalyst = _catalyst_level(sentiment)
 
-    # ── Layer 1: SMC 結構分析（門檻） ────────────────────
+    # ── Layer 1: SMC 結構分析（門檻）+ MTF 多時間框架 ────
     smc_trend = "未知"
     smc_entry: dict | None = None
+    mtf_info: dict | None = None
+    weekly_trend = "未知"
+    monthly_trend = "未知"
     try:
-        df = await load_price_df(db, stock.id, limit=120)
+        # 載入更多資料供週線/月線分析（最多 5 年）
+        df = await load_price_df(db, stock.id, limit=1260)  # ~5 年交易日
         if df is not None and len(df) >= 30:
-            smc_result = run_smc_analysis(df)
-            smc_trend = smc_result.get("structure", {}).get("trend", "未知")
-            smc_entry = smc_result.get("entry_suggestion")
+            mtf_result = run_mtf_smc_analysis(df)
+            smc_trend = mtf_result["daily"].get("structure", {}).get("trend", "未知")
+            smc_entry = mtf_result["daily"].get("entry_suggestion")
+            weekly_trend = mtf_result["weekly"].get("trend", "未知")
+            monthly_trend = mtf_result["monthly"].get("trend", "未知")
+            mtf_info = mtf_result.get("mtf")
     except Exception as e:
-        logger.warning(f"{stock.ticker} SMC 分析失敗: {e}")
+        logger.warning(f"{stock.ticker} SMC/MTF 分析失敗: {e}")
 
     # ── 分層決策 ──────────────────────────────────────────
     rr = smc_entry.get("rr") if smc_entry else None
-    decision = _layered_decision(smc_trend, tech["score"], catalyst, rr)
+    entry_price = smc_entry.get("entry") if smc_entry else None
+    stop_price = smc_entry.get("stop") if smc_entry else None
+    target_price = smc_entry.get("target") if smc_entry else None
+    current_price = tech["indicators"].get("price")
+    decision = _layered_decision(
+        smc_trend, tech["score"], catalyst, rr, mtf=mtf_info,
+        current_price=current_price, stop_price=stop_price, target_price=target_price,
+    )
 
     recommendation = decision["recommendation"]
     composite = decision["composite_score"]
@@ -202,6 +310,10 @@ async def run_analysis_for_stock(
 
     # 把分層結果加入訊號說明
     tech["signals"].append(f"SMC: {smc_trend}")
+    if weekly_trend != "未知" or monthly_trend != "未知":
+        tech["signals"].append(f"MTF: 日{smc_trend} / 週{weekly_trend} / 月{monthly_trend}")
+    if mtf_info:
+        tech["signals"].append(f"MTF 對齊: {mtf_info['alignment']}（{mtf_info['confidence']}信心）")
     tech["signals"].append(f"催化劑: {catalyst}")
     if position_tier:
         tech["signals"].append(f"倉位建議: {position_tier}")
@@ -265,6 +377,10 @@ async def run_analysis_for_stock(
         "recommendation": recommendation,
         "position_tier": position_tier,
         "smc_trend": smc_trend,
+        "weekly_trend": weekly_trend,
+        "monthly_trend": monthly_trend,
+        "mtf_alignment": mtf_info.get("alignment") if mtf_info else None,
+        "mtf_confidence": mtf_info.get("confidence") if mtf_info else None,
         "catalyst": catalyst,
         "signals_met": decision["signals_met"],
         "indicators": ind,

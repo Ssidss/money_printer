@@ -32,14 +32,16 @@ export const api = {
     ),
   removeStock: (ticker: string) =>
     del<{ message: string }>(`/api/v1/stocks/${ticker}`),
-  stockPrices: (ticker: string, limit = 120) =>
-    get<PriceBar[]>(`/api/v1/stocks/${ticker}/prices?limit=${limit}`),
+  stockPrices: (ticker: string, limit = 120, timeframe: "daily" | "weekly" | "monthly" = "daily") =>
+    get<PriceBar[]>(`/api/v1/stocks/${ticker}/prices?limit=${limit}&timeframe=${timeframe}`),
   stockAnalysis: (ticker: string) =>
     get<AnalysisRow[]>(`/api/v1/stocks/${ticker}/analysis`),
   stockNews: (ticker: string) =>
     get<NewsItem[]>(`/api/v1/stocks/${ticker}/news`),
   stockFetch: (ticker: string, days = 7) =>
     post<{ message: string; rows_added: number }>(`/api/v1/stocks/${ticker}/fetch?days=${days}`, {}),
+  batchFetch: (days = 7) =>
+    post<{ message: string }>(`/api/v1/stocks/batch-fetch?days=${days}`, {}),
   stockAnalyze: (ticker: string) =>
     post<{ message: string }>(`/api/v1/stocks/${ticker}/analyze`, {}),
   stockAnalyzeSync: (ticker: string) =>
@@ -58,9 +60,33 @@ export const api = {
   sell: (body: SellRequest) => post<{ message: string; pnl_pct: number }>("/api/v1/portfolio/sell", body),
 
   // SMC
-  smcTrends: () => get<Record<string, string>>("/api/v1/stocks/smc-trends"),
+  smcTrendsRaw: () => get<Record<string, SmcTrendMTF | string>>("/api/v1/stocks/smc-trends"),
+  smcTrends: async (): Promise<Record<string, string>> => {
+    const raw = await get<Record<string, SmcTrendMTF | string>>("/api/v1/stocks/smc-trends")
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(raw)) {
+      out[k] = typeof v === "string" ? v : v.daily
+    }
+    return out
+  },
+  smcTrendsMTF: async (): Promise<Record<string, SmcTrendMTF>> => {
+    const raw = await get<Record<string, SmcTrendMTF | string>>("/api/v1/stocks/smc-trends")
+    const out: Record<string, SmcTrendMTF> = {}
+    for (const [k, v] of Object.entries(raw)) {
+      out[k] = typeof v === "string"
+        ? { daily: v, weekly: "未知", monthly: "未知" }
+        : v
+    }
+    return out
+  },
   stockSmc: (ticker: string, limit = 120) =>
     get<SmcData>(`/api/v1/stocks/${ticker}/smc?limit=${limit}`),
+
+  // Realtime prices
+  realtimePrice: (ticker: string) =>
+    get<RealtimePrice>(`/api/v1/stocks/${ticker}/realtime`),
+  realtimePrices: () =>
+    get<Record<string, RealtimePrice>>(`/api/v1/stocks/realtime`),
 
   // Backtest
   backtestResults: () => get<BacktestSummary[]>("/api/v1/backtest/results"),
@@ -79,6 +105,13 @@ export const api = {
 }
 
 // Types
+export type RealtimePrice = {
+  ticker?: string; name?: string | null; market?: string
+  price: number; open: number | null; high: number | null; low: number | null
+  prev_close: number | null; change: number | null; change_pct: number | null
+  volume: number | null; market_cap: number | null
+}
+export type SmcTrendMTF = { daily: string; weekly: string; monthly: string }
 export type Stock = { id: number; ticker: string; name: string | null; market: string }
 export type PriceBar = { date: string; open: number; high: number; low: number; close: number; volume: number }
 export type AnalysisRow = {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import datetime
+from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -90,7 +91,7 @@ async def sell(req: SellRequest, db: AsyncSession = Depends(get_db)):
     db.add(txn)
 
     avg_cost = float(holding.avg_cost)  # 在刪除前保存
-    holding.total_shares -= req.shares
+    holding.total_shares -= Decimal(str(req.shares))
     if holding.total_shares <= 0:
         await db.delete(holding)
 

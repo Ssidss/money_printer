@@ -14,7 +14,7 @@ from ..models.analysis import AnalysisResult
 from ..models.portfolio import PortfolioHolding
 from ..models.ai_note import AiAnalysisNote
 from ..services.technical import load_price_df
-from ..services.smc import find_structure
+from ..services.smc import find_structure, resample_to_weekly, resample_to_monthly, mtf_alignment
 from .analysis import _get_entry
 
 router = APIRouter(prefix="/briefing", tags=["briefing"])
@@ -49,14 +49,24 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
             .limit(1)
         )).scalar_one_or_none()
 
-        # 取 SMC 趨勢
-        df = await load_price_df(db, h.stock_id, limit=60)
+        # 取 SMC 趨勢（含 MTF）
+        df = await load_price_df(db, h.stock_id, limit=1260)
         smc_trend = "未知"
+        weekly_trend = "未知"
+        monthly_trend = "未知"
+        mtf_info = None
         current_price = None
         if df is not None and len(df) >= 30:
             try:
                 smc_trend = find_structure(df).get("trend", "未知")
                 current_price = round(float(df["Close"].iloc[-1]), 2)
+                df_w = resample_to_weekly(df)
+                if len(df_w) >= 20:
+                    weekly_trend = find_structure(df_w).get("trend", "未知")
+                df_m = resample_to_monthly(df)
+                if len(df_m) >= 12:
+                    monthly_trend = find_structure(df_m).get("trend", "未知")
+                mtf_info = mtf_alignment(smc_trend, weekly_trend, monthly_trend)
             except Exception:
                 pass
 
@@ -93,6 +103,10 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
             "pnl_pct": pnl_pct,
             "stop_loss": stop_loss,
             "smc_trend": smc_trend,
+            "weekly_trend": weekly_trend,
+            "monthly_trend": monthly_trend,
+            "mtf_alignment": mtf_info.get("alignment") if mtf_info else None,
+            "mtf_tradable": mtf_info.get("tradable") if mtf_info else None,
             "alert": alert,
             "composite_score": float(ar.composite_score) if ar and ar.composite_score else None,
             "recommendation": ar.recommendation if ar else None,

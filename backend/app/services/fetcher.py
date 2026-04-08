@@ -54,6 +54,7 @@ US_COMPANY_NAMES = {
     "UBER": "Uber", "SHOP": "Shopify", "SMCI": "Super Micro",
     "QQQ": "Nasdaq 100 ETF", "SPY": "S&P 500 ETF", "SOXX": "半導體 ETF",
     "UNH": "UnitedHealth", "JPM": "JPMorgan",
+    "ONDS": "Ondas Inc",
 }
 
 
@@ -74,6 +75,14 @@ async def get_latest_price_date(db: AsyncSession, stock_id: int) -> date | None:
     """取得 DB 中某股票最新的價格日期"""
     result = await db.execute(
         select(func.max(PriceHistory.date)).where(PriceHistory.stock_id == stock_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_earliest_price_date(db: AsyncSession, stock_id: int) -> date | None:
+    """取得 DB 中某股票最早的價格日期"""
+    result = await db.execute(
+        select(func.min(PriceHistory.date)).where(PriceHistory.stock_id == stock_id)
     )
     return result.scalar_one_or_none()
 
@@ -121,8 +130,43 @@ async def fetch_and_store_prices(
     """
     stock = await ensure_stock_exists(db, ticker, market)
     latest_date = await get_latest_price_date(db, stock.id)
+    earliest_date = await get_earliest_price_date(db, stock.id)
+    desired_start = date.today() - timedelta(days=days)
 
-    # 決定起始日期
+    # 往回補更早的資料
+    if earliest_date and desired_start < earliest_date:
+        backfill_start = desired_start.strftime("%Y-%m-%d")
+        backfill_end = earliest_date.strftime("%Y-%m-%d")
+        if progress_cb:
+            await progress_cb(f"回補 {ticker} 歷史股價 ({backfill_start} ~ {backfill_end})...")
+        loop = asyncio.get_event_loop()
+        if market == "US":
+            bf_df = await loop.run_in_executor(None, _fetch_yfinance, ticker, backfill_start, backfill_end)
+        else:
+            symbol_info = await loop.run_in_executor(None, _resolve_tw_symbol, ticker)
+            bf_df = None
+            if symbol_info:
+                symbol, _ = symbol_info
+                bf_df = await loop.run_in_executor(None, _fetch_yfinance, symbol, backfill_start, backfill_end)
+        if bf_df is not None and not bf_df.empty:
+            rows = []
+            for dt, row in bf_df.iterrows():
+                rows.append({
+                    "stock_id": stock.id, "date": dt.date(),
+                    "open": float(row["Open"]) if pd.notna(row["Open"]) else None,
+                    "high": float(row["High"]) if pd.notna(row["High"]) else None,
+                    "low": float(row["Low"]) if pd.notna(row["Low"]) else None,
+                    "close": float(row["Close"]) if pd.notna(row["Close"]) else None,
+                    "volume": int(row["Volume"]) if pd.notna(row["Volume"]) else None,
+                })
+            if rows:
+                stmt = insert(PriceHistory).values(rows)
+                stmt = stmt.on_conflict_do_nothing(index_elements=["stock_id", "date"])
+                await db.execute(stmt)
+                await db.commit()
+                logger.info(f"{ticker} 回補 {len(rows)} 筆歷史股價")
+
+    # 決定起始日期（往後補新資料）
     if latest_date:
         start_date = latest_date + timedelta(days=1)
         if start_date >= date.today():
@@ -130,7 +174,7 @@ async def fetch_and_store_prices(
             return 0
         start_str = start_date.strftime("%Y-%m-%d")
     else:
-        start_str = (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+        start_str = desired_start.strftime("%Y-%m-%d")
 
     end_str = date.today().strftime("%Y-%m-%d")
 
@@ -177,6 +221,64 @@ async def fetch_and_store_prices(
 
     logger.info(f"{ticker} 寫入 {len(rows)} 筆股價資料")
     return len(rows)
+
+
+def _fetch_realtime_price(symbol: str) -> dict | None:
+    """同步呼叫 yfinance 取得即時/盤中報價"""
+    try:
+        t = yf.Ticker(symbol)
+        info = t.fast_info
+        price = getattr(info, "last_price", None)
+        prev_close = getattr(info, "previous_close", None)
+        market_cap = getattr(info, "market_cap", None)
+        day_high = getattr(info, "day_high", None)
+        day_low = getattr(info, "day_low", None)
+        day_open = getattr(info, "open", None)
+        volume = getattr(info, "last_volume", None)
+
+        if price is None:
+            return None
+
+        change = (price - prev_close) if prev_close else None
+        change_pct = (change / prev_close * 100) if prev_close and change is not None else None
+
+        return {
+            "price": round(price, 2),
+            "open": round(day_open, 2) if day_open else None,
+            "high": round(day_high, 2) if day_high else None,
+            "low": round(day_low, 2) if day_low else None,
+            "prev_close": round(prev_close, 2) if prev_close else None,
+            "change": round(change, 2) if change is not None else None,
+            "change_pct": round(change_pct, 2) if change_pct is not None else None,
+            "volume": int(volume) if volume else None,
+            "market_cap": int(market_cap) if market_cap else None,
+        }
+    except Exception as e:
+        logger.error(f"yfinance 即時報價 {symbol} 失敗: {e}")
+        return None
+
+
+async def fetch_realtime_price(ticker: str, market: str) -> dict | None:
+    """非同步取得單支股票的即時報價"""
+    loop = asyncio.get_event_loop()
+    if market == "US":
+        return await loop.run_in_executor(None, _fetch_realtime_price, ticker)
+    else:
+        symbol_info = await loop.run_in_executor(None, _resolve_tw_symbol, ticker)
+        if symbol_info is None:
+            return None
+        symbol, _ = symbol_info
+        return await loop.run_in_executor(None, _fetch_realtime_price, symbol)
+
+
+async def fetch_realtime_prices_batch(tickers: list[tuple[str, str]]) -> dict[str, dict]:
+    """批次取得多支股票的即時報價"""
+    results = {}
+    for ticker, market in tickers:
+        data = await fetch_realtime_price(ticker, market)
+        if data:
+            results[ticker] = data
+    return results
 
 
 async def fetch_all_stocks(

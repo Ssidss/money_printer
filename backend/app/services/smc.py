@@ -2,11 +2,45 @@ from __future__ import annotations
 """
 SMC (Smart Money Concepts) 分析 Service
 計算 Order Blocks、Fair Value Gaps、市場結構、量能分佈、走勢機率
+
+支援多時間框架 (MTF)：日線 / 週線 / 月線
 """
 
 import pandas as pd
 import numpy as np
 from typing import Any
+
+
+# ─── 時間框架轉換 ─────────────────────────────────────────────────────────────
+
+def resample_to_weekly(df: pd.DataFrame) -> pd.DataFrame:
+    """日線 → 週線 K 棒"""
+    if df.index.dtype == "object" or not hasattr(df.index, "to_period"):
+        df = df.copy()
+        df.index = pd.to_datetime(df.index)
+    weekly = df.resample("W").agg({
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    }).dropna(subset=["Close"])
+    return weekly
+
+
+def resample_to_monthly(df: pd.DataFrame) -> pd.DataFrame:
+    """日線 → 月線 K 棒"""
+    if df.index.dtype == "object" or not hasattr(df.index, "to_period"):
+        df = df.copy()
+        df.index = pd.to_datetime(df.index)
+    monthly = df.resample("ME").agg({
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    }).dropna(subset=["Close"])
+    return monthly
 
 
 # ─── 工具函數 ──────────────────────────────────────────────────────────────────
@@ -569,4 +603,270 @@ def run_smc_analysis(df: pd.DataFrame) -> dict[str, Any]:
         "probability": prob,
         "key_levels": key_levels,
         "entry_suggestion": entry_sug,
+    }
+
+
+# ─── 多時間框架 (MTF) 分析 ────────────────────────────────────────────────────
+
+_TREND_RANK = {"上升趨勢": 2, "盤整": 1, "下降趨勢": 0, "未知": 1}
+
+
+def _safe_structure_trend(df: pd.DataFrame, min_candles: int = 20) -> str:
+    """安全地從 DataFrame 取出結構趨勢，資料不足回傳 '未知'"""
+    if df is None or len(df) < min_candles:
+        return "未知"
+    try:
+        structure = find_structure(df)
+        return structure.get("trend", "未知")
+    except Exception:
+        return "未知"
+
+
+def _collect_htf_key_levels(
+    weekly_obs: list[dict],
+    monthly_obs: list[dict],
+    weekly_structure: dict,
+    monthly_structure: dict,
+) -> list[dict]:
+    """
+    從週線/月線收集高時間框架的關鍵價位
+    這些 OB 和 swing 比日線的更權威
+    """
+    htf_levels = []
+
+    # 週線 OB → 主要支撐/壓力
+    for ob in weekly_obs[:5]:
+        htf_levels.append({
+            "type": "support" if ob["type"] == "bullish" else "resistance",
+            "price": ob["top"] if ob["type"] == "bullish" else ob["bottom"],
+            "source": f"週線OB",
+            "timeframe": "weekly",
+            "strength": ob.get("strength", 0) * 2,  # 週線權重加倍
+        })
+
+    # 月線 OB → 超強支撐/壓力
+    for ob in monthly_obs[:3]:
+        htf_levels.append({
+            "type": "support" if ob["type"] == "bullish" else "resistance",
+            "price": ob["top"] if ob["type"] == "bullish" else ob["bottom"],
+            "source": f"月線OB",
+            "timeframe": "monthly",
+            "strength": ob.get("strength", 0) * 3,  # 月線權重三倍
+        })
+
+    # 週線 swing highs/lows
+    for sh in weekly_structure.get("swing_highs", [])[-3:]:
+        htf_levels.append({
+            "type": "resistance", "price": sh["price"],
+            "source": "週線SwingHigh", "timeframe": "weekly", "strength": 5,
+        })
+    for sl in weekly_structure.get("swing_lows", [])[-3:]:
+        htf_levels.append({
+            "type": "support", "price": sl["price"],
+            "source": "週線SwingLow", "timeframe": "weekly", "strength": 5,
+        })
+
+    return htf_levels
+
+
+def mtf_alignment(
+    daily_trend: str,
+    weekly_trend: str,
+    monthly_trend: str,
+) -> dict:
+    """
+    多時間框架對齊分析
+
+    Returns:
+        {
+            "alignment": "三重上升" / "雙重上升" / "日線反彈" / "三重下降" / ...
+            "score_adj": float,   # 分數調整 (-15 ~ +15)
+            "confidence": str,    # "高" / "中" / "低"
+            "detail": str,
+            "tradable": bool,     # 是否適合交易
+        }
+    """
+    d = _TREND_RANK.get(daily_trend, 1)
+    w = _TREND_RANK.get(weekly_trend, 1)
+    m = _TREND_RANK.get(monthly_trend, 1)
+
+    # ── 三重對齊 ──
+    if d == 2 and w == 2 and m == 2:
+        return {
+            "alignment": "三重上升",
+            "score_adj": 15,
+            "confidence": "高",
+            "detail": "月線 + 週線 + 日線全部上升，最強做多環境",
+            "tradable": True,
+        }
+    if d == 0 and w == 0 and m == 0:
+        return {
+            "alignment": "三重下降",
+            "score_adj": -15,
+            "confidence": "高",
+            "detail": "月線 + 週線 + 日線全部下降，絕對不做多",
+            "tradable": False,
+        }
+
+    # ── 雙重對齊（月+週同向）──
+    if w == 2 and m == 2:
+        if d == 2:
+            # already caught above
+            pass
+        elif d == 1:
+            return {
+                "alignment": "大趨勢上升，日線盤整",
+                "score_adj": 8,
+                "confidence": "中",
+                "detail": "月線 + 週線上升，日線盤整中，等日線重新上升是好買點",
+                "tradable": True,
+            }
+        else:  # d == 0
+            return {
+                "alignment": "日線反彈待確認",
+                "score_adj": -5,
+                "confidence": "低",
+                "detail": "月週上升但日線下降，可能是回調也可能是反轉，等日線止穩",
+                "tradable": False,
+            }
+
+    if w == 0 and m == 0:
+        if d == 2:
+            return {
+                "alignment": "逆勢反彈",
+                "score_adj": -10,
+                "confidence": "低",
+                "detail": "月線 + 週線下降，日線上升只是反彈，不追多",
+                "tradable": False,
+            }
+        elif d == 1:
+            return {
+                "alignment": "大趨勢下降，日線盤整",
+                "score_adj": -10,
+                "confidence": "低",
+                "detail": "月線 + 週線下降，日線盤整，等待不操作",
+                "tradable": False,
+            }
+        else:
+            # caught by triple down above
+            pass
+
+    # ── 週線上升 ──
+    if w == 2:
+        if d == 2:
+            return {
+                "alignment": "雙重上升",
+                "score_adj": 10,
+                "confidence": "中",
+                "detail": f"週線 + 日線上升（月線{monthly_trend}），做多環境良好",
+                "tradable": True,
+            }
+        elif d == 0:
+            return {
+                "alignment": "週線上升，日線回調",
+                "score_adj": 0,
+                "confidence": "低",
+                "detail": "週線上升但日線下降，等日線止穩再進場",
+                "tradable": False,
+            }
+
+    # ── 週線下降 ──
+    if w == 0:
+        if d == 2:
+            return {
+                "alignment": "日線逆勢反彈",
+                "score_adj": -8,
+                "confidence": "低",
+                "detail": f"週線下降，日線上升可能只是反彈（月線{monthly_trend}）",
+                "tradable": False,
+            }
+
+    # ── 其他盤整組合 ──
+    if d == 2 and (w == 1 or m == 1):
+        return {
+            "alignment": "日線上升，高時間框架盤整",
+            "score_adj": 3,
+            "confidence": "中",
+            "detail": f"日線上升，週線{weekly_trend}、月線{monthly_trend}，可小倉位操作",
+            "tradable": True,
+        }
+
+    # 預設：混合/不明確
+    return {
+        "alignment": "方向不明確",
+        "score_adj": 0,
+        "confidence": "低",
+        "detail": f"日線{daily_trend}、週線{weekly_trend}、月線{monthly_trend}，無明確方向",
+        "tradable": d >= 1,
+    }
+
+
+def run_mtf_smc_analysis(df_daily: pd.DataFrame) -> dict[str, Any]:
+    """
+    多時間框架 SMC 分析（入口函數）
+
+    從日線 DataFrame 產生週線/月線，分別做 SMC 分析，
+    最終整合出 MTF 對齊判斷 + 高時間框架關鍵價位。
+
+    Returns:
+        {
+            "daily": { ... run_smc_analysis 結果 },
+            "weekly": { trend, order_blocks, structure },
+            "monthly": { trend, order_blocks, structure },
+            "mtf": { alignment, score_adj, confidence, detail, tradable },
+            "htf_key_levels": [ ... 週線/月線的 OB 和 swing 價位 ],
+        }
+    """
+    # 日線分析（完整）
+    daily_result = run_smc_analysis(df_daily)
+    daily_trend = daily_result.get("structure", {}).get("trend", "未知")
+
+    # 週線分析
+    weekly_trend = "未知"
+    weekly_obs = []
+    weekly_structure = {}
+    try:
+        df_weekly = resample_to_weekly(df_daily)
+        if len(df_weekly) >= 20:
+            weekly_obs = find_order_blocks(df_weekly, lookback=50)
+            weekly_structure = find_structure(df_weekly)
+            weekly_trend = weekly_structure.get("trend", "未知")
+    except Exception:
+        pass
+
+    # 月線分析
+    monthly_trend = "未知"
+    monthly_obs = []
+    monthly_structure = {}
+    try:
+        df_monthly = resample_to_monthly(df_daily)
+        if len(df_monthly) >= 12:
+            monthly_obs = find_order_blocks(df_monthly, lookback=30)
+            monthly_structure = find_structure(df_monthly)
+            monthly_trend = monthly_structure.get("trend", "未知")
+    except Exception:
+        pass
+
+    # MTF 對齊
+    mtf = mtf_alignment(daily_trend, weekly_trend, monthly_trend)
+
+    # 高時間框架關鍵價位
+    htf_levels = _collect_htf_key_levels(
+        weekly_obs, monthly_obs, weekly_structure, monthly_structure,
+    )
+
+    return {
+        "daily": daily_result,
+        "weekly": {
+            "trend": weekly_trend,
+            "order_blocks": weekly_obs,
+            "structure": weekly_structure,
+        },
+        "monthly": {
+            "trend": monthly_trend,
+            "order_blocks": monthly_obs,
+            "structure": monthly_structure,
+        },
+        "mtf": mtf,
+        "htf_key_levels": htf_levels,
     }

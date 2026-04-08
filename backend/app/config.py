@@ -10,17 +10,11 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
 
-    # 排程（台灣時間）
-    SCHEDULE_TW_HOUR: int = 18
-    SCHEDULE_TW_MINUTE: int = 30
-    SCHEDULE_US_HOUR: int = 6
-    SCHEDULE_US_MINUTE: int = 30
-
     # 每日推薦數量
     DAILY_RECOMMEND_COUNT: int = 3
 
     # 歷史資料抓取天數
-    PRICE_HISTORY_DAYS: int = 365
+    PRICE_HISTORY_DAYS: int = 1825  # 5 年，供週線/月線 SMC 分析用
 
     # 技術分析參數
     RSI_PERIOD: int = 14
@@ -50,6 +44,8 @@ class Settings(BaseSettings):
         "PLTR", "SNOW", "NET", "CRWD", "PANW", "NOW", "CRM",
         # 其他科技
         "UBER", "SHOP", "SMCI",
+        # 無人機 / 無線通訊
+        "ONDS",
         # ETF
         "QQQ", "SPY", "SOXX",
         # 醫療 / 金融

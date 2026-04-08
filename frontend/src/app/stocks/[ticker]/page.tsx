@@ -1,9 +1,9 @@
 import { api } from "@/lib/api"
-import { StockChart } from "@/components/stock/StockChart"
 import { VolumeProfile } from "@/components/stock/VolumeProfile"
 import { BackButton } from "@/components/stock/BackButton"
 import { AiNotes } from "@/components/stock/AiNotes"
 import { StockActions } from "@/components/stock/StockActions"
+import { ChartControls } from "@/components/stock/ChartControls"
 import type { SmcData } from "@/lib/api"
 
 export const revalidate = 0
@@ -155,22 +155,8 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
         </div>
       )}
 
-      {/* Chart */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-        <div className="px-4 pt-4 pb-2 border-b border-slate-100 flex items-center gap-2">
-          <span className="text-xs font-medium text-slate-500">日線圖</span>
-          <span className="text-xs text-slate-300">· SMC 疊加</span>
-          {smc && (
-            <div className="ml-auto flex items-center gap-3 text-xs text-slate-400">
-              <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-green-500 inline-block" /> OB多</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-red-500 inline-block" /> OB空</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-indigo-500 border-dashed border-t border-indigo-500 inline-block" /> FVG</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-amber-400 inline-block" /> POC</span>
-            </div>
-          )}
-        </div>
-        <StockChart bars={bars} smc={smc} height={480} />
-      </div>
+      {/* Chart with timeframe controls */}
+      <ChartControls ticker={T} initialBars={bars} initialSmc={smc} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 

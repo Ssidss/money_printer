@@ -8,7 +8,8 @@ from ..database import get_db, AsyncSessionLocal
 from ..models.stock import Stock, PriceHistory
 from ..models.analysis import AnalysisResult, NewsArticle
 from ..services.technical import load_price_df
-from ..services.smc import run_smc_analysis, find_structure
+from ..services.smc import run_smc_analysis, run_mtf_smc_analysis, find_structure, resample_to_weekly, resample_to_monthly
+from ..services.fetcher import fetch_realtime_price, fetch_realtime_prices_batch
 from ..sse.manager import emit_progress
 from .analysis import _get_entry
 
@@ -24,22 +25,78 @@ async def list_stocks(db: AsyncSession = Depends(get_db)):
 
 @router.get("/smc-trends")
 async def get_smc_trends(db: AsyncSession = Depends(get_db)):
-    """批次取得所有追蹤股票的 SMC 趨勢（輕量版，只算 Market Structure）"""
+    """批次取得所有追蹤股票的 SMC 趨勢（含 MTF 多時間框架）"""
     result = await db.execute(select(Stock).where(Stock.is_active == True))
     stocks = result.scalars().all()
 
-    trends: dict[str, str] = {}
+    trends: dict[str, dict | str] = {}
     for stock in stocks:
-        df = await load_price_df(db, stock.id, limit=60)
+        df = await load_price_df(db, stock.id, limit=1260)
         if df is None:
             trends[stock.ticker] = "未知"
             continue
         try:
+            # 日線結構
             struct = find_structure(df)
-            trends[stock.ticker] = struct.get("trend", "未知")
+            daily_trend = struct.get("trend", "未知")
+
+            # 週線結構
+            weekly_trend = "未知"
+            try:
+                df_w = resample_to_weekly(df)
+                if len(df_w) >= 20:
+                    weekly_trend = find_structure(df_w).get("trend", "未知")
+            except Exception:
+                pass
+
+            # 月線結構
+            monthly_trend = "未知"
+            try:
+                df_m = resample_to_monthly(df)
+                if len(df_m) >= 12:
+                    monthly_trend = find_structure(df_m).get("trend", "未知")
+            except Exception:
+                pass
+
+            trends[stock.ticker] = {
+                "daily": daily_trend,
+                "weekly": weekly_trend,
+                "monthly": monthly_trend,
+            }
         except Exception:
             trends[stock.ticker] = "未知"
     return trends
+
+
+@router.get("/realtime")
+async def get_realtime_prices(db: AsyncSession = Depends(get_db)):
+    """批次取得所有追蹤股票的即時/盤中報價（手動觸發）"""
+    result = await db.execute(select(Stock).where(Stock.is_active == True))
+    stocks = result.scalars().all()
+    tickers = [(s.ticker, s.market) for s in stocks]
+    prices = await fetch_realtime_prices_batch(tickers)
+    # 附上股票名稱
+    name_map = {s.ticker: s.name for s in stocks}
+    for ticker, data in prices.items():
+        data["name"] = name_map.get(ticker)
+    return prices
+
+
+@router.get("/{ticker}/realtime")
+async def get_realtime_price_single(ticker: str, db: AsyncSession = Depends(get_db)):
+    """取得單支股票的即時/盤中報價（手動觸發）"""
+    ticker = ticker.upper()
+    result = await db.execute(select(Stock).where(Stock.ticker == ticker))
+    stock = result.scalar_one_or_none()
+    if not stock:
+        raise HTTPException(404, f"股票 {ticker} 不存在")
+    data = await fetch_realtime_price(ticker, stock.market)
+    if not data:
+        raise HTTPException(502, f"無法取得 {ticker} 即時報價")
+    data["ticker"] = ticker
+    data["name"] = stock.name
+    data["market"] = stock.market
+    return data
 
 
 @router.get("/{ticker}")
@@ -57,6 +114,7 @@ async def get_prices(
     from_date: date | None = None,
     to_date: date | None = None,
     limit: int = 120,
+    timeframe: str = "daily",  # daily / weekly / monthly
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(Stock).where(Stock.ticker == ticker.upper()))
@@ -64,15 +122,22 @@ async def get_prices(
     if not stock:
         raise HTTPException(404, f"股票 {ticker} 不存在")
 
+    # 週線/月線需要更多原始資料
+    raw_limit = limit
+    if timeframe == "weekly":
+        raw_limit = limit * 5 + 50    # 每週約 5 個交易日
+    elif timeframe == "monthly":
+        raw_limit = limit * 22 + 100  # 每月約 22 個交易日
+
     q = select(PriceHistory).where(PriceHistory.stock_id == stock.id)
     if from_date:
         q = q.where(PriceHistory.date >= from_date)
     if to_date:
         q = q.where(PriceHistory.date <= to_date)
-    q = q.order_by(PriceHistory.date.desc()).limit(limit)
+    q = q.order_by(PriceHistory.date.desc()).limit(raw_limit)
 
     rows = (await db.execute(q)).scalars().all()
-    return [
+    bars = [
         {
             "date": r.date.isoformat(),
             "open": float(r.open) if r.open else None,
@@ -83,6 +148,34 @@ async def get_prices(
         }
         for r in reversed(rows)
     ]
+
+    # 如果要週線/月線，用 pandas resample
+    if timeframe in ("weekly", "monthly") and bars:
+        import pandas as pd
+        df = pd.DataFrame(bars)
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date")
+        rule = "W" if timeframe == "weekly" else "ME"
+        df = df.resample(rule).agg({
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }).dropna(subset=["close"]).tail(limit)
+        bars = [
+            {
+                "date": idx.strftime("%Y-%m-%d"),
+                "open": round(row["open"], 2) if row["open"] else None,
+                "high": round(row["high"], 2) if row["high"] else None,
+                "low": round(row["low"], 2) if row["low"] else None,
+                "close": round(row["close"], 2) if row["close"] else None,
+                "volume": int(row["volume"]) if row["volume"] else 0,
+            }
+            for idx, row in df.iterrows()
+        ]
+
+    return bars
 
 
 @router.get("/{ticker}/analysis")
@@ -173,6 +266,38 @@ async def get_smc(ticker: str, limit: int = 120, db: AsyncSession = Depends(get_
     if df is None:
         raise HTTPException(404, "股價資料不足（需至少 30 ���K棒）")
     return run_smc_analysis(df)
+
+
+# ── 批次更新 ─────────────────────────────────────────────────────
+
+@router.post("/batch-fetch")
+async def batch_fetch_stocks(
+    days: int = 7,
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
+    """批次更新所有追蹤股票的股價（背景執行）"""
+    background_tasks.add_task(_run_batch_fetch, days)
+    return {"message": f"批次股價更新已啟動（回補 {days} 天）"}
+
+
+async def _run_batch_fetch(days: int):
+    from ..services.fetcher import fetch_and_store_prices
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Stock).where(Stock.is_active == True))
+        stocks = result.scalars().all()
+        total = len(stocks)
+        for i, stock in enumerate(stocks, 1):
+            await emit_progress(
+                f"更新 {stock.ticker} 股價 ({i}/{total})...",
+                phase="batch_fetch", current=i, total=total, ticker=stock.ticker,
+            )
+            try:
+                await fetch_and_store_prices(db, stock.ticker, stock.market, days=days)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"批次更新 {stock.ticker} 失敗: {e}")
+        await emit_progress("批次股價更新完成", phase="done", current=total, total=total)
 
 
 # ── 單股更新 ─────────────────────────────────────────────────────
