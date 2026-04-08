@@ -14,7 +14,7 @@ import type { PriceBar, SmcData } from "@/lib/api"
 interface Props {
   bars: PriceBar[]
   smc: SmcData | null
-  height?: number
+  height?: number | "100%"
 }
 
 const COLORS = {
@@ -32,14 +32,16 @@ const COLORS = {
 export function StockChart({ bars, smc, height = 520 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef     = useRef<IChartApi | null>(null)
-  const candleRef    = useRef<ISeriesApi<"Candlestick"> | null>(null)
 
   useEffect(() => {
     if (!containerRef.current || bars.length === 0) return
 
-    const chart = createChart(containerRef.current, {
-      width: containerRef.current.clientWidth,
-      height,
+    const el = containerRef.current
+    const computedHeight = height === "100%" ? el.clientHeight : height
+
+    const chart = createChart(el, {
+      width: el.clientWidth,
+      height: computedHeight,
       layout: {
         background: { color: "#ffffff" },
         textColor: "#475569",
@@ -62,7 +64,7 @@ export function StockChart({ bars, smc, height = 520 }: Props) {
 
     chartRef.current = chart
 
-    // ── 蠟燭圖 ──────────────────────────────
+    // Candles
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: "#22c55e",
       downColor: "#ef4444",
@@ -80,9 +82,8 @@ export function StockChart({ bars, smc, height = 520 }: Props) {
       close: b.close,
     }))
     candleSeries.setData(candleData)
-    candleRef.current = candleSeries
 
-    // ── 成交量 ──────────────────────────────
+    // Volume
     const volSeries = chart.addSeries(HistogramSeries, {
       color: "#94a3b8",
       priceFormat: { type: "volume" },
@@ -95,11 +96,8 @@ export function StockChart({ bars, smc, height = 520 }: Props) {
       color: b.close >= b.open ? "rgba(34,197,94,0.4)" : "rgba(239,68,68,0.4)",
     })))
 
-    // ── SMC 疊加 ─────────────────────────────
+    // SMC overlay
     if (smc) {
-      const firstDate = bars[0]?.date as Time
-      const lastDate  = bars[bars.length - 1]?.date as Time
-
       // Order Blocks
       smc.order_blocks?.forEach(ob => {
         if (ob.mitigated) return
@@ -145,7 +143,7 @@ export function StockChart({ bars, smc, height = 520 }: Props) {
         candleSeries.createPriceLine({ price: vp.va_low,  color: "#6366f1",     lineWidth: 1, lineStyle: 1, title: "價值區下緣" })
       }
 
-      // Key Levels（Swing Highs/Lows）
+      // Key Levels
       smc.key_levels?.forEach(lv => {
         candleSeries.createPriceLine({
           price: lv.price,
@@ -159,11 +157,13 @@ export function StockChart({ bars, smc, height = 520 }: Props) {
 
     chart.timeScale().fitContent()
 
-    // Resize
+    // Resize observer
     const ro = new ResizeObserver(() => {
-      if (containerRef.current) chart.applyOptions({ width: containerRef.current.clientWidth })
+      if (!el) return
+      const newHeight = height === "100%" ? el.clientHeight : height
+      chart.applyOptions({ width: el.clientWidth, height: newHeight })
     })
-    ro.observe(containerRef.current)
+    ro.observe(el)
 
     return () => {
       ro.disconnect()
@@ -171,5 +171,9 @@ export function StockChart({ bars, smc, height = 520 }: Props) {
     }
   }, [bars, smc, height])
 
-  return <div ref={containerRef} style={{ width: "100%", height }} />
+  const style = height === "100%"
+    ? { width: "100%", height: "100%" }
+    : { width: "100%", height }
+
+  return <div ref={containerRef} style={style} />
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { api } from "@/lib/api"
 import { StockChart } from "./StockChart"
 import type { PriceBar, SmcData } from "@/lib/api"
@@ -36,9 +36,9 @@ export function ChartControls({
   const [bars, setBars] = useState(initialBars)
   const [smc, setSmc] = useState(initialSmc)
   const [loading, setLoading] = useState(false)
+  const [fullscreen, setFullscreen] = useState(false)
 
   useEffect(() => {
-    // Skip initial load (already have data)
     if (timeframe === "daily" && period === 120) {
       setBars(initialBars)
       setSmc(initialSmc)
@@ -52,7 +52,7 @@ export function ChartControls({
       try {
         const [newBars, newSmc] = await Promise.allSettled([
           api.stockPrices(ticker, period, timeframe),
-          timeframe === "daily" ? api.stockSmc(ticker, period) : Promise.resolve(null),
+          api.stockSmc(ticker, period, timeframe),
         ])
         if (cancelled) return
         setBars(newBars.status === "fulfilled" ? newBars.value : [])
@@ -67,69 +67,130 @@ export function ChartControls({
     return () => { cancelled = true }
   }, [ticker, timeframe, period, initialBars, initialSmc])
 
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-      {/* Header with controls */}
-      <div className="px-4 pt-4 pb-2 border-b border-slate-100 flex items-center gap-3 flex-wrap">
-        {/* Timeframe tabs */}
-        <div className="flex rounded-lg border border-slate-200 overflow-hidden">
-          {TF_OPTIONS.map((tf) => (
-            <button
-              key={tf.value}
-              onClick={() => setTimeframe(tf.value)}
-              className={`px-3 py-1 text-xs font-medium transition-colors ${
-                timeframe === tf.value
-                  ? "bg-indigo-600 text-white"
-                  : "bg-white text-slate-500 hover:bg-slate-50"
-              }`}
-            >
-              {tf.label}
-            </button>
-          ))}
-        </div>
+  // ESC to exit fullscreen
+  useEffect(() => {
+    if (!fullscreen) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false)
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [fullscreen])
 
-        {/* Period tabs */}
-        <div className="flex gap-1">
-          {PERIOD_OPTIONS.map((p) => (
-            <button
-              key={p.days}
-              onClick={() => setPeriod(p.days)}
-              className={`px-2 py-1 text-xs rounded font-medium transition-colors ${
-                period === p.days
-                  ? "bg-slate-700 text-white"
-                  : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+  // Lock body scroll when fullscreen
+  useEffect(() => {
+    if (fullscreen) {
+      document.body.style.overflow = "hidden"
+    } else {
+      document.body.style.overflow = ""
+    }
+    return () => { document.body.style.overflow = "" }
+  }, [fullscreen])
 
-        {loading && (
-          <span className="text-xs text-slate-400 animate-pulse">載入中...</span>
-        )}
+  const tfLabel = timeframe === "daily" ? "日線" : timeframe === "weekly" ? "週線" : "月線"
 
-        {/* SMC legend (only for daily) */}
-        {smc && timeframe === "daily" && (
-          <div className="ml-auto flex items-center gap-3 text-xs text-slate-400">
-            <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-green-500 inline-block" /> OB多</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-red-500 inline-block" /> OB空</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-indigo-500 border-dashed border-t border-indigo-500 inline-block" /> FVG</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-amber-400 inline-block" /> POC</span>
-          </div>
-        )}
-
-        {timeframe !== "daily" && (
-          <span className="ml-auto text-xs text-slate-400">
-            {timeframe === "weekly" ? "週線" : "月線"} · {bars.length} 根 K 棒
-          </span>
-        )}
+  const controlBar = (
+    <div className="px-4 pt-3 pb-2 border-b border-slate-100 flex items-center gap-3 flex-wrap">
+      {/* Timeframe tabs */}
+      <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+        {TF_OPTIONS.map((tf) => (
+          <button
+            key={tf.value}
+            onClick={() => setTimeframe(tf.value)}
+            className={`px-3 py-1 text-xs font-medium transition-colors ${
+              timeframe === tf.value
+                ? "bg-indigo-600 text-white"
+                : "bg-white text-slate-500 hover:bg-slate-50"
+            }`}
+          >
+            {tf.label}
+          </button>
+        ))}
       </div>
 
-      {/* Chart */}
+      {/* Period tabs */}
+      <div className="flex gap-1">
+        {PERIOD_OPTIONS.map((p) => (
+          <button
+            key={p.days}
+            onClick={() => setPeriod(p.days)}
+            className={`px-2 py-1 text-xs rounded font-medium transition-colors ${
+              period === p.days
+                ? "bg-slate-700 text-white"
+                : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {loading && (
+        <span className="text-xs text-slate-400 animate-pulse">載入中...</span>
+      )}
+
+      {/* SMC legend */}
+      {smc && (
+        <div className="ml-auto flex items-center gap-3 text-xs text-slate-400">
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-green-500 inline-block" /> OB多</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-red-500 inline-block" /> OB空</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-indigo-500 border-dashed border-t border-indigo-500 inline-block" /> FVG</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-amber-400 inline-block" /> POC</span>
+          <span className="text-slate-300 mx-1">|</span>
+          <span>{tfLabel} · {bars.length} 根</span>
+        </div>
+      )}
+
+      {!smc && (
+        <span className="ml-auto text-xs text-slate-400">
+          {tfLabel} · {bars.length} 根 K 棒
+        </span>
+      )}
+
+      {/* Fullscreen button */}
+      <button
+        onClick={() => setFullscreen(!fullscreen)}
+        className="text-xs px-2 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+        title={fullscreen ? "退出全螢幕 (ESC)" : "全螢幕"}
+      >
+        {fullscreen ? "✕ 退出" : "⛶ 放大"}
+      </button>
+    </div>
+  )
+
+  // Fullscreen overlay
+  if (fullscreen) {
+    return (
+      <>
+        {/* Normal placeholder to keep layout */}
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden" style={{ height: 540 }}>
+          <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+            圖表已放大顯示中... 按 ESC 退出
+          </div>
+        </div>
+
+        {/* Fullscreen overlay */}
+        <div className="fixed inset-0 z-50 bg-white flex flex-col">
+          {controlBar}
+          <div className="flex-1 min-h-0">
+            <StockChart
+              bars={bars}
+              smc={smc}
+              height="100%"
+            />
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  // Normal mode
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      {controlBar}
       <StockChart
         bars={bars}
-        smc={timeframe === "daily" ? smc : null}
+        smc={smc}
         height={480}
       />
     </div>

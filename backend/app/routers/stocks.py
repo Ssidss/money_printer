@@ -256,15 +256,42 @@ async def add_stock(ticker: str, market: str, name: str = "", db: AsyncSession =
 
 
 @router.get("/{ticker}/smc")
-async def get_smc(ticker: str, limit: int = 120, db: AsyncSession = Depends(get_db)):
-    """SMC 分析：Order Blocks、FVG���市場結構、量能分佈、走勢機率"""
+async def get_smc(
+    ticker: str,
+    limit: int = 120,
+    timeframe: str = "daily",
+    db: AsyncSession = Depends(get_db),
+):
+    """SMC 分析（支援日/週/月線）：OB、FVG、結構、量能、機率"""
     result = await db.execute(select(Stock).where(Stock.ticker == ticker.upper()))
     stock = result.scalar_one_or_none()
     if not stock:
-        raise HTTPException(404, f"股票 {ticker} ��存在")
-    df = await load_price_df(db, stock.id, limit=limit)
+        raise HTTPException(404, f"股票 {ticker} 不存在")
+
+    # 週線/月線需要更多原始日線資料來 resample
+    if timeframe == "weekly":
+        raw_limit = max(limit * 5, 1260)
+    elif timeframe == "monthly":
+        raw_limit = max(limit * 22, 1260)
+    else:
+        raw_limit = limit
+
+    df = await load_price_df(db, stock.id, limit=raw_limit)
     if df is None:
-        raise HTTPException(404, "股價資料不足（需至少 30 ���K棒）")
+        raise HTTPException(404, "股價資料不足")
+
+    if timeframe == "weekly":
+        df = resample_to_weekly(df)
+        if len(df) > limit:
+            df = df.iloc[-limit:]
+    elif timeframe == "monthly":
+        df = resample_to_monthly(df)
+        if len(df) > limit:
+            df = df.iloc[-limit:]
+
+    if len(df) < 20:
+        raise HTTPException(404, f"{timeframe} 資料不足（需至少 20 根K棒，目前 {len(df)} 根）")
+
     return run_smc_analysis(df)
 
 

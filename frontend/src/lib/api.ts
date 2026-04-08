@@ -79,8 +79,8 @@ export const api = {
     }
     return out
   },
-  stockSmc: (ticker: string, limit = 120) =>
-    get<SmcData>(`/api/v1/stocks/${ticker}/smc?limit=${limit}`),
+  stockSmc: (ticker: string, limit = 120, timeframe: "daily" | "weekly" | "monthly" = "daily") =>
+    get<SmcData>(`/api/v1/stocks/${ticker}/smc?limit=${limit}&timeframe=${timeframe}`),
 
   // Realtime prices
   realtimePrice: (ticker: string) =>

@@ -131,7 +131,7 @@ export function StockActions({ ticker }: { ticker: string }) {
           {realtime.change !== null && (
             <span className={`font-medium ${realtime.change >= 0 ? "text-green-600" : "text-red-500"}`}>
               {realtime.change >= 0 ? "+" : ""}{realtime.change}
-              ({realtime.change_pct >= 0 ? "+" : ""}{realtime.change_pct}%)
+              ({(realtime.change_pct ?? 0) >= 0 ? "+" : ""}{realtime.change_pct}%)
             </span>
           )}
           {realtime.open !== null && (
