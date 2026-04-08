@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.stock import Stock, PriceHistory
 from .technical import analyze_df
-from .smc import find_structure
+from .smc_v1 import find_structure
 
 logger = logging.getLogger(__name__)
 

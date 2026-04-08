@@ -16,7 +16,7 @@ from sqlalchemy import select
 from .config import settings
 from .database import engine, AsyncSessionLocal, Base
 from .models import Stock, PriceHistory, AnalysisResult, NewsArticle, PortfolioTransaction, PortfolioHolding, BacktestResult
-from .routers import stocks, analysis, portfolio, backtest, sse, telegram, ai_notes, briefing
+from .routers import stocks, analysis, portfolio, backtest, sse, telegram, ai_notes, briefing, smc_v2
 from .services.fetcher import ensure_stock_exists
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,7 @@ app.include_router(backtest.router, prefix="/api/v1")
 app.include_router(telegram.router, prefix="/api/v1")
 app.include_router(ai_notes.router, prefix="/api/v1")
 app.include_router(briefing.router, prefix="/api/v1")
+app.include_router(smc_v2.router, prefix="/api/v2")
 app.include_router(sse.router)
 
 

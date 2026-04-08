@@ -41,6 +41,13 @@ class AnalysisResult(Base):
     news_summary: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict)
     entry_suggestion: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
+    # ── SMC v2 欄位 ──
+    smc_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)       # SmcResult.model_dump()
+    smc_version: Mapped[Optional[int]] = mapped_column(Integer, default=1)
+    entry_plan: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)     # EntryPlan.model_dump()
+    regime: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)     # trending/ranging/high_vol/low_vol
+    smc_computed_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=datetime.utcnow)
 
     stock: Mapped["Stock"] = relationship(back_populates="analyses")  # type: ignore

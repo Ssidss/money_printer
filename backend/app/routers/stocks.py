@@ -8,7 +8,7 @@ from ..database import get_db, AsyncSessionLocal
 from ..models.stock import Stock, PriceHistory
 from ..models.analysis import AnalysisResult, NewsArticle
 from ..services.technical import load_price_df
-from ..services.smc import run_smc_analysis, run_mtf_smc_analysis, find_structure, resample_to_weekly, resample_to_monthly
+from ..services.smc_v1 import run_smc_analysis, run_mtf_smc_analysis, find_structure, resample_to_weekly, resample_to_monthly
 from ..services.fetcher import fetch_realtime_price, fetch_realtime_prices_batch
 from ..sse.manager import emit_progress
 from .analysis import _get_entry

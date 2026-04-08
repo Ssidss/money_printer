@@ -14,7 +14,7 @@ from ..models.analysis import AnalysisResult
 from ..models.portfolio import PortfolioHolding
 from ..models.ai_note import AiAnalysisNote
 from ..services.technical import load_price_df
-from ..services.smc import find_structure, resample_to_weekly, resample_to_monthly, mtf_alignment
+from ..services.smc_v1 import find_structure, resample_to_weekly, resample_to_monthly, mtf_alignment
 from .analysis import _get_entry
 
 router = APIRouter(prefix="/briefing", tags=["briefing"])

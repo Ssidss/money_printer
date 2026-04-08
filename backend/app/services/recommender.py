@@ -21,7 +21,7 @@ from ..models.stock import Stock
 from ..models.analysis import AnalysisResult, NewsArticle
 from .technical import analyze_stock, load_price_df
 from .sentiment import aggregate_sentiment
-from .smc import find_structure, run_smc_analysis, run_mtf_smc_analysis, compute_smc_entry
+from .smc_v1 import find_structure, run_smc_analysis, run_mtf_smc_analysis, compute_smc_entry
 
 logger = logging.getLogger(__name__)
 
