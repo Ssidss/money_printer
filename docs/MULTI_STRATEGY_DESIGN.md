@@ -185,6 +185,7 @@ class Signal:
 ```python
 @dataclass
 class Decision:
+    decision_id: str            # UUID（Order 關聯用）
     ticker: str
     action: str                 # "open" | "close" | "reduce" | "hold"
     side: str                   # "long"
@@ -511,7 +512,7 @@ class Position:
     # ── 平倉後填入 ──
     exit_price: Optional[float] = None
     exit_date: Optional[date] = None
-    exit_reason: Optional[str] = None   # "stop" | "target" | "signal_reversal" | "time_stop"
+    exit_reason: Optional[str] = None   # "stop" | "target" | "gap_stop" | "gap_profit" | "signal_reversal" | "time_stop"
     realized_pnl: Optional[float] = None
     realized_pnl_pct: Optional[float] = None
 ```
@@ -526,6 +527,8 @@ class Portfolio:
     positions: list[Position]       # open positions
     closed_trades: list[Position]   # closed positions（完整 trade log）
     equity_curve: list[dict]        # [{"date": ..., "equity": ..., "drawdown_pct": ...}]
+    consecutive_losses: int = 0     # KillSwitch 用：當前連續虧損筆數
+    peak_equity: float = 0.0       # 用於計算 drawdown
 
     @property
     def equity(self) -> float:
@@ -958,3 +961,21 @@ class KillSwitch:
 5. **Long-only 聲明** — 鐵律僅適用 long，short 需重新定義保守路徑 ✅
 
 結論：**設計已過危險區，進入實作。接下來最大風險不是設計錯，而是實作偷偷偏離 spec。**
+
+### Self-Review（2026-04-11，Claude）
+
+對照現有 codebase 的 6 個實作決策 + 3 個 dataclass 修正：
+
+**實作決策（寫進 code 前的約定）：**
+
+1. **新舊引擎對齊策略** — Phase 1A 照 spec 寫，跑完再跟舊引擎比。差太多就查誰有 bug，不盲目對齊舊引擎。
+2. **Fill model 簡化** — Phase 1A 只做 `next_open`（固定用 T+1 Open），現有的 limit/conservative/close 留 Phase 2+ 擴充。
+3. **Position tier 分配** — 策略自己在 `price_hint.position_tier` 填，沒填預設 "標準"。分配邏輯在策略內部。
+4. **Trailing stop 延後** — Phase 1A/1B 不做 trailing stop，stop_price 固定。Phase 2 Momentum 需要時加 `update_stops()` hook。
+5. **get_indicators() 定位** — convenience method，內部用 `get_ohlcv()` 算。SMC 策略主要用 `get_ohlcv()` 自己做結構分析，不強制用 get_indicators()。
+6. **SMC 包 Strategy 策略** — thin wrapper，`SMCStrategy.generate_signals()` 內部直接 call 現有 `run_smc_analysis_v2()` + `generate_entry_plan()`，把 EntryPlan 轉 Signal。不重寫 SMC 邏輯。
+
+**Dataclass 修正：**
+- Position.exit_reason 補 "gap_stop" / "gap_profit" ✅
+- Decision 補 `decision_id` 欄位（Order 關聯用）✅
+- Portfolio 補 `consecutive_losses` / `peak_equity` 欄位（KillSwitch 用）✅
