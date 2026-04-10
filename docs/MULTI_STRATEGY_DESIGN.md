@@ -1,8 +1,8 @@
-# Multi-Strategy Trading System — Design Document v2
+# Multi-Strategy Trading System — Design Document v3
 
 > 目標：自己交易賺錢，先賺錢再說（工程夠用就好，不過度抽象）
 > 最高原則：**先證明 alpha 存在再擴展**
-> 狀態：v2 — 已通過外部 Review，準備開工
+> 狀態：v3 — Final spec，可以開工
 > 最後更新：2026-04-10
 
 ---
@@ -191,6 +191,7 @@ class Decision:
     size_pct: float             # 佔資金池的 %（由 sizing model 計算）
     size_shares: Optional[int]  # 實際股數（execution 階段算）
     strategy_name: str          # 主要來源策略
+    capital_pool: str = "default"  # 分帳戶模式："core" | "momentum" | "explosion" | "default"
     reason: str                 # 人可讀的決策理由
     linked_signal_ids: list[str]  # 關聯的 signal_id（可多個）
     priority: int = 0           # 同天多個 decision 的優先順序
@@ -291,10 +292,11 @@ class DataProvider(ABC):
 ```python
 @dataclass
 class SizingModel:
-    risk_per_trade_pct: float = 1.0   # 每筆最多虧總資金的 1%
-    max_position_pct: float = 20.0    # 單支最大不超過 20%
-    max_positions: int = 10           # 最多同時持有 10 支
-    max_exposure_pct: float = 100.0   # 總曝險上限
+    risk_per_trade_pct: float = 1.0       # 每筆最多虧總資金的 1%
+    max_position_pct: float = 20.0      # 單支最大不超過 20%
+    max_positions: int = 10             # 最多同時持有 10 支
+    max_exposure_pct: float = 100.0     # 總曝險上限
+    max_portfolio_risk_pct: float = 5.0 # 所有持倉同時停損的最大虧損 ≤ 5%
 
     def calculate_shares(
         self, equity: float, entry: float, stop: float
@@ -306,7 +308,15 @@ class SizingModel:
         shares = int(risk_amount / risk_per_share)
         # 限制最大倉位
         max_shares = int(equity * (self.max_position_pct / 100) / entry)
-        return min(shares, max_shares)
+        shares = min(shares, max_shares)
+
+        # ── Portfolio-level risk cap ──
+        # 所有持倉同時停損的總虧損不能超過 max_portfolio_risk_pct
+        # current_total_risk = sum(each position's risk_amount)
+        # remaining_risk_budget = equity * max_portfolio_risk_pct/100 - current_total_risk
+        # if remaining_risk_budget < risk_amount:
+        #     shares = int(remaining_risk_budget / risk_per_share)
+        return shares
 ```
 
 ### 沒有 stop 的信號怎麼辦
@@ -317,7 +327,7 @@ class SizingModel:
 
 ---
 
-## 七、Execution 規則（四條鐵律）
+## 七、Execution 規則（六條鐵律）
 
 ### 鐵律 1：信號與執行分離
 
@@ -326,26 +336,49 @@ Day T 收盤後 → 產生 Signal（基於 Day T 及之前的數據）
 Day T+1 開盤 → 嘗試執行 Fill
 ```
 
-### 鐵律 2：跳空保護
+### 鐵律 2：Intraday Path Assumption（保守路徑）
+
+> 真實市場中，我們不知道日內價格先到 high 還是先到 low。
+> 必須選一個「一致的假設」，否則回測結果不可重現。
 
 ```
+對 Long 倉位，假設價格路徑為：
+
+  Open → Low → High → Close
+
+含義：
+  1. 先檢查是否觸及停損（price hit low first）
+  2. 再檢查是否觸及停利（price hit high second）
+
+這會「低估績效」（因為假設最壞情況先發生），但安全。
+同一天同時觸及停損和停利 → 觸發停損。
+
+❌ 絕對不用 Open → High → Low → Close（樂觀路徑會高估績效）
+```
+
+### 鐵律 3：Gap 保護（進場 + 出場）
+
+```
+── 進場 Gap 保護 ──
 if abs(T+1_open - T_close) / T_close > gap_threshold:
-    cancel_order()  # 跳空太大，取消交易
+    cancel_order()  # 跳空太大，取消進場
 
-gap_threshold = 5%（預設，可調）
-```
+gap_threshold = 5%（預設）
 
-### 鐵律 3：出場觸發模型
+── 出場 Gap 保護（致命重要）──
+已持倉時，如果開盤跳空穿越停損/停利：
 
-```
-停損/停利的觸發：
-  使用 Day T+1 的 high/low 判斷是否觸及
-  觸及停損 → exit_price = stop_price（假設止損單成交）
-  觸及停利 → exit_price = target_price
-  都沒觸及 → 持倉繼續
+  Gap Down Stop（多單）：
+    if open_price < stop_price:
+        exit_price = open_price  # 不是 stop_price！
+        # 真實市場中，止損單會以開盤價成交，不是你設的價
 
-同一天同時觸及停損和停利：
-  保守假設 → 觸發停損（worst case）
+  Gap Up Profit（多單）：
+    if open_price > target_price:
+        exit_price = open_price  # 以開盤價獲利了結
+
+❌ 絕對不能用 exit_price = stop_price 當跳空的成交價
+   這會嚴重高估績效，實盤會「暴死」
 ```
 
 ### 鐵律 4：同天多信號優先順序
@@ -353,7 +386,37 @@ gap_threshold = 5%（預設，可調）
 ```
 1. 先處理出場信號（close/reduce）→ 釋放資金
 2. 再處理進場信號（open）→ 按 confidence 降序
-3. 資金不足時 → 跳過低優先信號
+3. 資金不足時 → 縮小倉位到可用資金，而不是直接跳過
+   actual_size = min(requested_size, available_cash × 0.95)
+   如果縮小後 size < 最低門檻（例如 1 股）→ 才跳過
+```
+
+### 鐵律 5：出場觸發價格模型
+
+```
+使用日內 high/low 判斷（搭配鐵律 2 的保守路徑）：
+
+  Step 1: 開盤檢查
+    open < stop → gap stop（鐵律 3）
+    open > target → gap profit（鐵律 3）
+
+  Step 2: 日內檢查（保守路徑 open→low→high→close）
+    low ≤ stop → exit at stop_price
+    high ≥ target → exit at target_price
+
+  Step 3: 收盤
+    都沒觸及 → 持倉繼續
+    更新 MAE = min(MAE, low - entry)
+    更新 MFE = max(MFE, high - entry)
+```
+
+### 鐵律 6：不可竄改已完成的交易
+
+```
+回測中一旦 position 被 close：
+  - 不可修改 exit_price / exit_date / exit_reason
+  - 不可「假設如果沒出場會怎樣」
+  - closed trade 直接進入 trade log，不可逆
 ```
 
 ### ExecutionModel
@@ -361,11 +424,13 @@ gap_threshold = 5%（預設，可調）
 ```python
 @dataclass
 class ExecutionModel:
-    fill_type: str = "next_open"      # "next_open" | "next_close"
-    slippage_pct: float = 0.05        # 0.05% 滑價
-    commission_per_trade: float = 0   # 美股多數 $0
-    gap_threshold_pct: float = 5.0    # 跳空超過 5% 取消
-    stop_trigger: str = "intraday"    # "intraday"（用 high/low）| "close"（用收盤）
+    fill_type: str = "next_open"        # "next_open" | "next_close"
+    slippage_pct: float = 0.05          # 0.05% 滑價
+    commission_per_trade: float = 0     # 美股多數 $0
+    gap_threshold_pct: float = 5.0      # 進場跳空超過 5% → 取消
+    gap_stop_enabled: bool = True       # 出場跳空 → 用 open price
+    path_assumption: str = "conservative"  # "conservative" = open→low→high→close
+    min_trade_value: float = 100.0      # 縮小倉位後的最低交易金額
 ```
 
 ---
@@ -450,6 +515,8 @@ class Portfolio:
 | Expectancy | 期望值 = win_rate × avg_win - loss_rate × avg_loss |
 | Exposure % | 平均曝險比例 |
 | Max Consecutive Losses | 最大連續虧損次數 |
+| Calmar Ratio | CAGR / Max Drawdown（越高越好，>1 算不錯）|
+| Tail Risk (VaR 5%) | 最差 5% 交易的平均虧損（尾部風險衡量）|
 
 ### Level 2：Strategy Breakdown
 
@@ -580,6 +647,18 @@ Phase 5:  動態加權 + Regime adaptive
   → Phase 5 用 regime 判斷當前適合哪類
 ```
 
+### 策略相關性硬限制
+
+```
+同類策略（相同 strategy_type）的合計曝險 ≤ 60%
+
+例如：Momentum 25% + Explosion 20% = 45%（breakout 類合計）✅
+      Momentum 40% + Explosion 25% = 65%（breakout 類合計）❌ → 縮減
+
+原因：同類策略的報酬高度相關，集中在同一類等於沒分散
+Phase 2 的回測報表會產出策略相關性矩陣，用來驗證這個假設
+```
+
 ---
 
 ## 十三、Exit 規則
@@ -624,7 +703,50 @@ Phase 5:  動態加權 + Regime adaptive
 
 ---
 
-## 十五、Roadmap（務實版）
+## 十五、Kill Switch（系統熔斷）
+
+### 原則：系統失控時自動停機，不靠人的紀律
+
+```
+系統失敗條件（任一觸發 → 停止所有新開倉，僅允許平倉）：
+
+1. Test 段 Sharpe < 0.3        → 策略沒有真正的 edge
+2. 即時 MDD > 30%              → 虧損已超出可接受範圍
+3. 連續虧損 > 15 筆             → 可能市場 regime 改變或策略失效
+4. 單日虧損 > 5% 總資金         → 異常事件，先停再查
+5. 策略報酬偏離 Validation > 2σ  → 可能過擬合或市場結構性改變
+
+觸發後行動：
+  - 停止開新倉
+  - 已持倉按正常停損/停利出場
+  - 生成診斷報告（最近 30 天 trade log + metrics drift）
+  - 人工 review 後手動重啟
+```
+
+### 回測中的 Kill Switch
+
+```python
+@dataclass
+class KillSwitch:
+    max_drawdown_pct: float = 30.0
+    max_consecutive_losses: int = 15
+    max_daily_loss_pct: float = 5.0
+    min_sharpe_threshold: float = 0.3    # rolling 60-day Sharpe
+    enabled: bool = True
+
+    def check(self, portfolio) -> Optional[str]:
+        """回傳 None = OK，回傳 str = 觸發原因"""
+        if portfolio.current_drawdown_pct > self.max_drawdown_pct:
+            return f"MDD {portfolio.current_drawdown_pct:.1f}% > {self.max_drawdown_pct}%"
+        if portfolio.consecutive_losses > self.max_consecutive_losses:
+            return f"連續虧損 {portfolio.consecutive_losses} > {self.max_consecutive_losses}"
+        # ... 其他檢查
+        return None
+```
+
+---
+
+## 十六、Roadmap（務實版）
 
 ### Phase 1A：最小可回測引擎
 
@@ -695,7 +817,7 @@ Phase 5:  動態加權 + Regime adaptive
 
 ---
 
-## 十六、技術決策記錄
+## 十七、技術決策記錄
 
 | 決策 | 選擇 | 原因 |
 |------|------|------|
@@ -709,10 +831,15 @@ Phase 5:  動態加權 + Regime adaptive
 | 分帳戶先於 Ensemble | Phase 3 | 最容易落地、最容易診斷、不會混掉 edge |
 | Train/Valid/Test 三段 | 寫進鐵律 | 防過擬合，這是回測可信度的底線 |
 | Phase 1 拆 A/B | A=最小引擎 B=風控 | 避免兩週沒結果，快速看到 SMC 在新引擎跑 |
+| 保守 Intraday Path | Open→Low→High→Close | 低估績效但安全，同天觸及 stop+target → 觸發 stop |
+| Gap Stop = Open Price | 不用 stop_price | 真實市場跳空會以開盤價成交，用 stop_price 會高估績效 |
+| Portfolio Risk Cap 5% | 所有持倉同時停損 ≤ 5% | 10 支 × 1% = 10% 太高，用 cap 控制尾部風險 |
+| Kill Switch | 5 個熔斷條件 | 系統失控時自動停機，不靠人的紀律 |
+| 同類曝險 ≤ 60% | 策略相關性硬限制 | 同類策略報酬高度相關，集中等於沒分散 |
 
 ---
 
-## 十七、已知風險
+## 十八、已知風險
 
 | 風險 | 嚴重度 | 對策 |
 |------|--------|------|
@@ -726,7 +853,7 @@ Phase 5:  動態加權 + Regime adaptive
 
 ---
 
-## 十八、Review 歷史
+## 十九、Review 歷史
 
 ### v1 Review（2026-04-10，GPT-4）
 
@@ -746,12 +873,30 @@ Phase 5:  動態加權 + Regime adaptive
 1. **Exit Policy 抽象化** — 延後到 Phase 4，不在 Phase 1 做。出場邏輯是策略 edge 的核心，過早抽象化違反「先賺錢再說」。
 2. **Explosion Scanner 優先順序** — 維持 Phase 2。掃描器已完成，包成 Strategy 只需 wrapper。Mean Reversion 需要 regime detection，放 Phase 4 更合理。
 
-### v2 待 Review
+### v2 Review（2026-04-10，GPT-4）
+
+評分：9.1 / 10
+
+採納的修正（6 個致命點全部修復）：
+1. **Intraday Path Assumption** — 新增鐵律 2：保守路徑 Open→Low→High→Close ✅
+2. **Gap Stop on Existing Positions** — 新增鐵律 3 出場部分：exit_price = open_price, not stop_price ✅
+3. **Portfolio-level Risk Cap** — SizingModel 新增 max_portfolio_risk_pct = 5.0 ✅
+4. **Strategy Correlation Limits** — 同類策略合計曝險 ≤ 60% 硬限制 ✅
+5. **Capital Insufficient Fallback** — 鐵律 4：縮小倉位而非跳過 ✅
+6. **Kill Switch** — 新增第十五節：系統熔斷條件 + KillSwitch dataclass ✅
+
+額外新增：
+- Decision 新增 `capital_pool` 欄位，支援分帳戶模式
+- 報表新增 Calmar Ratio 和 Tail Risk (VaR 5%) 指標
+- Execution 從 4 條鐵律擴充為 6 條鐵律（出場價格模型 + 不可竄改已完成交易）
+- ExecutionModel 新增 gap_stop_enabled / path_assumption / min_trade_value 參數
+
+### v3 待 Review
 
 重點確認：
-1. Decision 結構是否完整
-2. SizingModel 固定風險模型的公式是否正確
-3. Execution 四條鐵律有沒有漏洞
-4. Phase 1A/1B 的切分是否合理
-5. 資料切分規範是否夠嚴格
-6. 三層報表的 metrics 有沒有漏
+1. 六條鐵律的完整性（特別是保守路徑 + gap stop 的實作邏輯）
+2. Kill Switch 的觸發條件是否合理（閾值設定）
+3. Portfolio risk cap 在 SizingModel 中的計算流程
+4. 策略相關性硬限制 60% 是否合適
+5. Calmar Ratio / Tail Risk 的計算方式
+6. Phase 1A 是否可以開始實作
