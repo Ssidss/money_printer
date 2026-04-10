@@ -201,8 +201,10 @@ class Decision:
 
 ```
 Decision 只表達「意圖」（想買多少風險）
-SizingModel 算出「目標股數」
-Execution 根據實際資金與開盤價算「最終成交股數」→ 填回 size_shares
+SizingModel 算出「目標股數」→ 產生 Order
+Execution 根據實際資金與開盤價成交 → Order.status = filled → 產生 Position
+
+完整 pipeline: Signal → Decision → Order → Fill → Position
 
 ❌ 不能在 Decision 和 Execution 各算一次部位
 ```
@@ -224,6 +226,32 @@ Execution 根據實際資金與開盤價算「最終成交股數」→ 填回 si
    score = sum(confidence × weight) for each signal
    score > threshold → decision = buy
 ```
+
+### Order（Decision 和 Position 之間的橋樑）
+
+```python
+@dataclass
+class Order:
+    order_id: str               # UUID
+    ticker: str
+    side: str                   # "long"
+    order_type: str = "market"  # v1 只做 market
+    requested_shares: int = 0
+    status: str = "pending"     # "pending" | "filled" | "cancelled"
+    created_date: date = None
+    linked_decision_id: str = ""
+    linked_signal_ids: list[str] = field(default_factory=list)
+    capital_pool: str = "default"
+
+    # ── 成交後填入 ──
+    fill_price: Optional[float] = None
+    fill_date: Optional[date] = None
+    fill_shares: Optional[int] = None
+    cancel_reason: Optional[str] = None  # "gap" | "insufficient_funds" | "expired"
+```
+
+> Order 不可跨天 pending — 當天沒成交 = cancelled。
+> v1 只做 market order，limit / partial fill 留 Phase 4+。
 
 ---
 

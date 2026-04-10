@@ -171,9 +171,15 @@ Output:
   2. 更新所有 open positions 的 current_price / unrealized_pnl
   3. 檢查出場條件（stop/target/expiry）→ 平倉
   4. for ticker in universe: strategy.generate_signals(ticker, provider)
-  5. signals → decisions（Phase 1A 用單策略直通）
-  6. decisions → execution（T+1 open fill）
-  7. 記錄 equity curve
+  5. 過濾過期 signals（current_date > signal.expiry → 丟棄）
+  6. signals → decisions（Phase 1A 用單策略直通）
+  7. decisions → orders → execution（T+1 open fill）
+  8. 記錄 equity curve
+
+Mark-to-market 規則：
+  - Execution 用當日 open price（T+1 fill）
+  - Valuation 用當日 close price（equity curve / unrealized_pnl）
+  - 信號在 close 後產生，所以 close 是最合理的估值基準
 
 驗收：
   ✅ 新引擎 SMC 回測的 total_return 與舊引擎誤差 < 5%
@@ -182,6 +188,8 @@ Output:
   ✅ trade_log 每筆都有完整的 entry/exit 資訊
   ✅ cash + position_value == equity（每天都平衡）
   ✅ 補算出 CAGR / Sharpe / Sortino
+  ✅ 過期 signal（current_date > expiry）不得轉為 decision
+  ✅ position.current_price 用 close（不是 open / mid）
 ```
 
 ---
@@ -313,7 +321,42 @@ Output 2:
   ❌ 絕對不能出現 gap down 但用 stop_price 出場的情況
 ```
 
-### US-1B-05：Portfolio Risk Cap
+### US-1B-05：Order 建立與狀態管理
+
+```
+身為：回測引擎
+我要：Decision 和 Position 之間有 Order 層
+以便：gap cancel / partial fill / 狀態追蹤有明確歸屬
+
+Input:
+  - Decision(action="open", ticker="NVDA", size_pct=10%)
+  - SizingModel 算出 requested_shares = 50
+
+Output (Order):
+  - order_id: UUID
+  - ticker: "NVDA"
+  - side: "long"
+  - order_type: "market"（v1 只做 market）
+  - requested_shares: 50
+  - status: "pending"
+  - created_date: Day T
+  - linked_decision_id / linked_signal_ids
+
+狀態流轉：
+  pending → filled     （T+1 open 正常成交）
+  pending → cancelled  （gap > threshold / 資金不足 / signal 過期）
+  pending → partial    （Phase 4+ 預留，v1 不實作）
+
+驗收：
+  ✅ 每個 Decision 產生恰好 1 個 Order
+  ✅ gap cancel → order.status = "cancelled"，不產生 Position
+  ✅ fill 成功 → order.status = "filled"，產生 Position
+  ✅ Order 記錄 fill_price / fill_date / fill_shares（成交後填入）
+  ✅ 回測報表可查詢：cancelled orders 數量 + 原因分布
+  ✅ Order 不可跨天 pending（當天沒成交 = cancelled）
+```
+
+### US-1B-06：Portfolio Risk Cap（原 1B-05）
 
 ```
 身為：風控系統
@@ -349,7 +392,7 @@ Output 2:
   ✅ 浮盈超過 1R + 保本停損 → risk 視為 0
 ```
 
-### US-1B-06：三層回測報表
+### US-1B-07：三層回測報表（原 1B-06）
 
 ```
 身為：交易者
@@ -397,8 +440,11 @@ Output Level 3 — Trade Log:
       "exit_date": "2024-02-10",
       "exit_price": 620.0,
       "exit_reason": "target",
+      "gross_pnl": 1430.0,
+      "commission": 0.0,
+      "slippage_cost": 30.0,
+      "net_pnl": 1400.0,
       "pnl_pct": 12.7,
-      "pnl_amount": 1400.0,
       "mae": -15.0,
       "mfe": 75.0,
       "holding_days": 26,
@@ -411,12 +457,14 @@ Output Level 3 — Trade Log:
   ✅ Level 1 所有 14 個 metrics 都有值
   ✅ Level 2 按策略拆分（Phase 1B 只有 SMC，但結構要支援多策略）
   ✅ Level 3 每筆 trade 有完整 entry/exit/pnl/mae/mfe
+  ✅ Level 3 每筆 trade 拆分 gross_pnl / commission / slippage_cost / net_pnl
+  ✅ 可回答「策略本身好不好 vs 交易成本吃掉多少」
   ✅ Sharpe 用 daily returns 年化（× √252）
   ✅ Calmar = CAGR / abs(MDD)
   ✅ CVaR 5% = 最差 5% 交易的平均 pnl_pct
 ```
 
-### US-1B-07：Train/Validation/Test 切分
+### US-1B-08：Train/Validation/Test 切分（原 1B-07）
 
 ```
 身為：交易者
@@ -439,7 +487,7 @@ Output:
   ✅ 自訂日期範圍也可以（但報表標 "custom"）
 ```
 
-### US-1B-08：Kill Switch 熔斷
+### US-1B-09：Kill Switch 熔斷（原 1B-08）
 
 ```
 身為：風控系統
@@ -534,7 +582,31 @@ Output (Signal):
   ✅ explosion_score < 40 → 不產生 buy signal
 ```
 
-### US-2-03：策略相關性分析
+### US-2-03：Re-entry Cooldown（Phase 2 再決定是否實作）
+
+```
+身為：交易者
+我要：同一 ticker 出場後有冷卻期
+以便：避免 whipsaw 連續打臉
+
+Input:
+  - NVDA: Day T breakout → buy
+  - Day T+1: stop hit → exit
+  - Day T+2: 又 breakout signal
+
+Output（cooldown_days=3）:
+  - Day T+2 的 signal 被過濾掉（距上次 exit 只過 1 天 < 3 天）
+  - Day T+4 的 signal 可以執行
+
+驗收：
+  ✅ 同 ticker exit 後 N 天內不產生 buy decision
+  ✅ cooldown 只針對同策略（SMC exit 不影響 Momentum re-entry）
+  ✅ cooldown_days = 0 → 不啟用（預設）
+
+備註：此 story 為可選項。Phase 2 回測時若出現頻繁 whipsaw，再啟用。
+```
+
+### US-2-04：策略相關性分析（原 2-03）
 
 ```
 身為：交易者
@@ -660,13 +732,15 @@ Output:
 | 1B | US-1B-02 | Gap 進場保護 | P0 |
 | 1B | US-1B-03 | 保守 Intraday Path | P0 |
 | 1B | US-1B-04 | Gap Stop 出場 | P0（致命） |
-| 1B | US-1B-05 | Portfolio Risk Cap | P1 |
-| 1B | US-1B-06 | 三層報表 | P1 |
-| 1B | US-1B-07 | Train/Valid/Test 切分 | P0 |
-| 1B | US-1B-08 | Kill Switch | P1 |
+| 1B | US-1B-05 | Order 建立與狀態 | P0 |
+| 1B | US-1B-06 | Portfolio Risk Cap | P1 |
+| 1B | US-1B-07 | 三層報表（含 cost breakdown） | P1 |
+| 1B | US-1B-08 | Train/Valid/Test 切分 | P0 |
+| 1B | US-1B-09 | Kill Switch | P1 |
 | 2 | US-2-01 | Momentum Breakout | P0 |
 | 2 | US-2-02 | Explosion Wrapper | P2 |
-| 2 | US-2-03 | 策略相關性 | P1 |
+| 2 | US-2-03 | Re-entry Cooldown | P2（可選）|
+| 2 | US-2-04 | 策略相關性 | P1 |
 | 3 | US-3-01 | Split Account | P0 |
 | X | US-X-01 | 不可竄改交易 | P0 |
 | X | US-X-02 | 多信號優先序 | P0 |
