@@ -5,18 +5,43 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    DATABASE_URL: str = "postgresql+asyncpg://postgres@localhost/money_printer"
+    # ── 資料庫 ─────────────────────────────────────────────
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 5432
+    DB_USER: str = "postgres"
+    DB_PASSWORD: str = ""
+    DB_NAME: str = "money_printer"
+
+    @property
+    def DATABASE_URL(self) -> str:
+        pwd = f":{self.DB_PASSWORD}" if self.DB_PASSWORD else ""
+        return f"postgresql+asyncpg://{self.DB_USER}{pwd}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+
+    # ── 認證 ───────────────────────────────────────────────
+    SECRET_KEY: str = "dev-only-change-in-production-please"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 小時
+    ALGORITHM: str = "HS256"
+
+    # ── 通知 ───────────────────────────────────────────────
     DISCORD_WEBHOOK_URL: str = ""
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
 
-    # 每日推薦數量
+    # ── 部署 ───────────────────────────────────────────────
+    ALLOWED_ORIGINS: str = "http://localhost:3000"  # 逗號分隔
+    ENVIRONMENT: str = "development"  # development | production
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
+
+    # ── 每日推薦 ──────────────────────────────────────────
     DAILY_RECOMMEND_COUNT: int = 3
 
-    # 歷史資料抓取天數
+    # ── 歷史資料抓取天數 ──────────────────────────────────
     PRICE_HISTORY_DAYS: int = 1825  # 5 年，供週線/月線 SMC 分析用
 
-    # 技術分析參數
+    # ── 技術分析參數 ──────────────────────────────────────
     RSI_PERIOD: int = 14
     RSI_OVERSOLD: float = 35.0
     RSI_OVERBOUGHT: float = 65.0
@@ -29,12 +54,12 @@ class Settings(BaseSettings):
     MA_LONG: int = 60
     VOLUME_MA: int = 20
 
-    # 停利停損
+    # ── 停利停損 ──────────────────────────────────────────
     STOP_LOSS_PCT: float = 0.07
     TAKE_PROFIT_PCT: float = 0.15
     TRAILING_STOP_PCT: float = 0.05
 
-    # 追蹤的股票清單
+    # ── 追蹤的股票清單 ────────────────────────────────────
     US_STOCKS: list[str] = [
         # 科技巨頭
         "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",

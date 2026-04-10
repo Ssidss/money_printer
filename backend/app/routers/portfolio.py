@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models.stock import Stock
+from ..models.user import User
 from ..models.portfolio import PortfolioTransaction, PortfolioHolding
 from ..config import settings
+from ..services.auth import get_current_user
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
@@ -29,7 +31,11 @@ class SellRequest(BaseModel):
 
 
 @router.post("/buy")
-async def buy(req: BuyRequest, db: AsyncSession = Depends(get_db)):
+async def buy(
+    req: BuyRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     ticker = req.ticker.upper()
     result = await db.execute(select(Stock).where(Stock.ticker == ticker))
     stock = result.scalar_one_or_none()
@@ -37,6 +43,7 @@ async def buy(req: BuyRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, f"股票 {ticker} 不在追蹤清單")
 
     txn = PortfolioTransaction(
+        user_id=user.id,
         stock_id=stock.id,
         action="BUY",
         shares=req.shares,
@@ -46,8 +53,13 @@ async def buy(req: BuyRequest, db: AsyncSession = Depends(get_db)):
     )
     db.add(txn)
 
-    # 更新或建立 holding
-    h_result = await db.execute(select(PortfolioHolding).where(PortfolioHolding.stock_id == stock.id))
+    # 更新或建立 holding（同一個 user + stock_id）
+    h_result = await db.execute(
+        select(PortfolioHolding).where(
+            PortfolioHolding.user_id == user.id,
+            PortfolioHolding.stock_id == stock.id,
+        )
+    )
     holding = h_result.scalar_one_or_none()
     if holding:
         new_total = holding.total_shares + req.shares
@@ -57,6 +69,7 @@ async def buy(req: BuyRequest, db: AsyncSession = Depends(get_db)):
         holding.highest_price = max(float(holding.highest_price), req.price)
     else:
         db.add(PortfolioHolding(
+            user_id=user.id,
             stock_id=stock.id,
             total_shares=req.shares,
             avg_cost=req.price,
@@ -68,19 +81,29 @@ async def buy(req: BuyRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/sell")
-async def sell(req: SellRequest, db: AsyncSession = Depends(get_db)):
+async def sell(
+    req: SellRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     ticker = req.ticker.upper()
     result = await db.execute(select(Stock).where(Stock.ticker == ticker))
     stock = result.scalar_one_or_none()
     if not stock:
         raise HTTPException(404)
 
-    h_result = await db.execute(select(PortfolioHolding).where(PortfolioHolding.stock_id == stock.id))
+    h_result = await db.execute(
+        select(PortfolioHolding).where(
+            PortfolioHolding.user_id == user.id,
+            PortfolioHolding.stock_id == stock.id,
+        )
+    )
     holding = h_result.scalar_one_or_none()
     if not holding or holding.total_shares < req.shares:
         raise HTTPException(400, "持股不足")
 
     txn = PortfolioTransaction(
+        user_id=user.id,
         stock_id=stock.id,
         action="SELL",
         shares=req.shares,
@@ -90,7 +113,7 @@ async def sell(req: SellRequest, db: AsyncSession = Depends(get_db)):
     )
     db.add(txn)
 
-    avg_cost = float(holding.avg_cost)  # 在刪除前保存
+    avg_cost = float(holding.avg_cost)
     holding.total_shares -= Decimal(str(req.shares))
     if holding.total_shares <= 0:
         await db.delete(holding)
@@ -101,10 +124,14 @@ async def sell(req: SellRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("")
-async def get_holdings(db: AsyncSession = Depends(get_db)):
+async def get_holdings(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     rows = (await db.execute(
         select(PortfolioHolding, Stock.ticker, Stock.market, Stock.name)
         .join(Stock)
+        .where(PortfolioHolding.user_id == user.id)
     )).all()
 
     result = []
@@ -127,10 +154,15 @@ async def get_holdings(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/transactions")
-async def get_transactions(limit: int = 50, db: AsyncSession = Depends(get_db)):
+async def get_transactions(
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     rows = (await db.execute(
         select(PortfolioTransaction, Stock.ticker, Stock.market)
         .join(Stock)
+        .where(PortfolioTransaction.user_id == user.id)
         .order_by(PortfolioTransaction.transacted_at.desc())
         .limit(limit)
     )).all()

@@ -15,8 +15,15 @@ from sqlalchemy import select
 
 from .config import settings
 from .database import engine, AsyncSessionLocal, Base
-from .models import Stock, PriceHistory, AnalysisResult, NewsArticle, PortfolioTransaction, PortfolioHolding, BacktestResult
+from .models import (
+    User,
+    Stock, PriceHistory, AnalysisResult, NewsArticle,
+    PortfolioTransaction, PortfolioHolding, BacktestResult,
+    AiAnalysisNote,
+    StrategyProfile, BacktestResultV2, BacktestTrade, BacktestEquity, StrategySignal,
+)
 from .routers import stocks, analysis, portfolio, backtest, sse, telegram, ai_notes, briefing, smc_v2
+from .routers import strategies, backtest_v2, auth, scanner
 from .services.fetcher import ensure_stock_exists
 
 logger = logging.getLogger(__name__)
@@ -56,18 +63,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Money Printer API",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ── v1 routes ────────────────────────────────────────────────────────
+app.include_router(auth.router, prefix="/api/v1")
 app.include_router(stocks.router, prefix="/api/v1")
 app.include_router(analysis.router, prefix="/api/v1")
 app.include_router(portfolio.router, prefix="/api/v1")
@@ -75,7 +84,14 @@ app.include_router(backtest.router, prefix="/api/v1")
 app.include_router(telegram.router, prefix="/api/v1")
 app.include_router(ai_notes.router, prefix="/api/v1")
 app.include_router(briefing.router, prefix="/api/v1")
+app.include_router(scanner.router, prefix="/api/v1")
+
+# ── v2 routes ────────────────────────────────────────────────────────
 app.include_router(smc_v2.router, prefix="/api/v2")
+app.include_router(strategies.router, prefix="/api/v2")
+app.include_router(backtest_v2.router, prefix="/api/v2")
+
+# ── SSE ──────────────────────────────────────────────────────────────
 app.include_router(sse.router)
 
 
@@ -83,7 +99,7 @@ app.include_router(sse.router)
 async def root():
     return {
         "name": "Money Printer API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "docs": "/docs",
         "status": "running",
     }

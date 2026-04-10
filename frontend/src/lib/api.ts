@@ -1,7 +1,36 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 
+// ── Token 管理（client-side only）──────────────────────
+function getToken(): string | null {
+  if (typeof window === "undefined") return null
+  return localStorage.getItem("mp_token")
+}
+export function setToken(token: string) {
+  localStorage.setItem("mp_token", token)
+}
+export function clearToken() {
+  localStorage.removeItem("mp_token")
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+// ── HTTP helpers ────────────────────────────────────────
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { cache: "no-store" })
+  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  return res.json()
+}
+
+/** GET with auth token */
+async function getAuth<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  })
+  if (res.status === 401) throw new Error("UNAUTHORIZED")
   if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
   return res.json()
 }
@@ -16,13 +45,59 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
+/** POST with auth token */
+async function postAuth<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+  if (res.status === 401) throw new Error("UNAUTHORIZED")
+  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  return res.json()
+}
+
+async function putAuth<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  })
+  if (res.status === 401) throw new Error("UNAUTHORIZED")
+  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  return res.json()
+}
+
 async function del<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { method: "DELETE" })
   if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
   return res.json()
 }
 
+// ── Auth types ──────────────────────────────────────────
+export type AuthUser = {
+  id: number
+  email: string
+  display_name: string
+  is_admin: boolean
+}
+
+export type TokenResponse = {
+  access_token: string
+  token_type: string
+  user: AuthUser
+}
+
 export const api = {
+  // Auth
+  login: (email: string, password: string) =>
+    post<TokenResponse>("/api/v1/auth/login", { email, password }),
+  register: (email: string, password: string, display_name: string) =>
+    post<TokenResponse>("/api/v1/auth/register", { email, password, display_name }),
+  me: () => getAuth<AuthUser>("/api/v1/auth/me"),
+  updateMe: (body: { display_name?: string; password?: string }) =>
+    putAuth<AuthUser>("/api/v1/auth/me", body),
+
   // Stocks
   stocks: () => get<Stock[]>("/api/v1/stocks"),
   addStock: (ticker: string, market: string, name?: string) =>
@@ -53,11 +128,11 @@ export const api = {
   topPicks: (n = 3) => get<TopPick[]>(`/api/v1/analysis/top-picks?n=${n}`),
   latestAnalysis: () => get<LatestAnalysis>("/api/v1/analysis/latest"),
 
-  // Portfolio
-  holdings: () => get<Holding[]>("/api/v1/portfolio"),
-  transactions: () => get<Transaction[]>("/api/v1/portfolio/transactions"),
-  buy: (body: BuyRequest) => post<{ message: string }>("/api/v1/portfolio/buy", body),
-  sell: (body: SellRequest) => post<{ message: string; pnl_pct: number }>("/api/v1/portfolio/sell", body),
+  // Portfolio (auth required)
+  holdings: () => getAuth<Holding[]>("/api/v1/portfolio"),
+  transactions: () => getAuth<Transaction[]>("/api/v1/portfolio/transactions"),
+  buy: (body: BuyRequest) => postAuth<{ message: string }>("/api/v1/portfolio/buy", body),
+  sell: (body: SellRequest) => postAuth<{ message: string; pnl_pct: number }>("/api/v1/portfolio/sell", body),
 
   // SMC
   smcTrendsRaw: () => get<Record<string, SmcTrendMTF | string>>("/api/v1/stocks/smc-trends"),
@@ -109,6 +184,49 @@ export const api = {
       {},
     ),
   smcV2Status: () => get<{ running: boolean }>("/api/v2/smc/analysis/status"),
+
+  // ── Strategy v2 ──
+  strategies: () => get<StrategyListItem[]>("/api/v2/strategies"),
+  strategy: (id: number) => get<StrategyFull>(`/api/v2/strategies/${id}`),
+  createStrategy: (body: StrategyCreateReq) => post<StrategyFull>("/api/v2/strategies", body),
+  updateStrategy: (id: number, body: Partial<StrategyCreateReq>) =>
+    fetch(`${BASE}/api/v2/strategies/${id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(r => r.json()) as Promise<StrategyFull>,
+  deleteStrategy: (id: number) => del<{ ok: boolean }>(`/api/v2/strategies/${id}`),
+  activateStrategy: (id: number) => post<{ ok: boolean }>(`/api/v2/strategies/${id}/activate`, {}),
+  cloneStrategy: (id: number) => post<StrategyFull>(`/api/v2/strategies/${id}/clone`, {}),
+
+  // ── Backtest v2 ──
+  backtestV2Run: (body: BacktestV2RunReq) => post<{ message: string }>("/api/v2/backtest/run", body),
+  backtestV2Status: () => get<{ running: boolean }>("/api/v2/backtest/status"),
+  backtestV2Results: (profileId?: number, limit = 20) =>
+    get<BacktestV2Result[]>(`/api/v2/backtest/results?limit=${limit}${profileId ? `&profile_id=${profileId}` : ""}`),
+  backtestV2Detail: (id: number) => get<BacktestV2Result>(`/api/v2/backtest/results/${id}`),
+  backtestV2Trades: (id: number, limit = 50, offset = 0) =>
+    get<BacktestV2Trade[]>(`/api/v2/backtest/results/${id}/trades?limit=${limit}&offset=${offset}`),
+  backtestV2Equity: (id: number) =>
+    get<BacktestV2EquityPoint[]>(`/api/v2/backtest/results/${id}/equity`),
+  backtestV2Compare: (a: number, b: number) =>
+    get<BacktestV2Compare>(`/api/v2/backtest/compare?a=${a}&b=${b}`),
+
+  // ── Strategy signals ──
+  strategySignals: (profileId: number, limit = 50) =>
+    get<StrategySignal[]>(`/api/v2/strategies/${profileId}/signals?limit=${limit}`),
+  followSignal: (profileId: number, signalId: number, body: { actual_entry?: number }) =>
+    post<{ ok: boolean }>(`/api/v2/strategies/${profileId}/signals/${signalId}/follow`, body),
+  skipSignal: (profileId: number, signalId: number, body: { skip_reason?: string }) =>
+    post<{ ok: boolean }>(`/api/v2/strategies/${profileId}/signals/${signalId}/skip`, body),
+
+  // Scanner (量價異常掃描器)
+  scannerLatest: () => get<ScanResponse>("/api/v1/scanner"),
+  scannerTracked: (minScore = 15) => get<ScanResponse>(`/api/v1/scanner/tracked?min_score=${minScore}`),
+  scannerRun: (includeExternal = true, minScore = 15) =>
+    post<{ message: string; running: boolean }>(
+      `/api/v1/scanner/run?include_external=${includeExternal}&min_score=${minScore}`, {}
+    ),
+  scannerStatus: () => get<{ running: boolean }>("/api/v1/scanner/status"),
 
   // AI Notes
   aiNotes: (ticker?: string, limit = 20) =>
@@ -443,5 +561,126 @@ export type SmcV2Inline = {
   rr_ratio: number | null
   position_tier: string | null
 } | null
+
+// ── Strategy v2 Types ──────────────────────────────────────────
+export type StrategyListItem = {
+  id: number; name: string; description: string | null
+  is_active: boolean; latest_backtest_id: number | null
+  latest_metrics: BacktestV2Metrics | null
+  created_at: string; updated_at: string
+}
+export type StrategyFull = StrategyListItem & {
+  params: Record<string, unknown>
+  overrides: Record<string, unknown>
+  stock_settings: Record<string, unknown>
+}
+export type StrategyCreateReq = {
+  name: string; description?: string
+  params?: Record<string, unknown>
+  overrides?: Record<string, unknown>
+  stock_settings?: Record<string, unknown>
+}
+
+export type BacktestV2RunReq = {
+  profile_id: number
+  start_date: string; end_date: string
+  initial_capital?: number; market_filter?: string
+}
+export type BacktestV2Metrics = {
+  total_return_pct: number; annual_return_pct: number
+  max_drawdown_pct: number; sharpe_ratio: number
+  win_rate: number; total_trades: number
+  profitable_trades: number; losing_trades: number
+  avg_profit_pct: number; avg_loss_pct: number
+  profit_factor: number; total_cost: number
+  by_exit_reason: Record<string, { count: number; avg_pnl_pct: number }>
+  by_tier: Record<string, { count: number; avg_pnl_pct: number }>
+  by_group: Record<string, { count: number; avg_pnl_pct: number }>
+}
+export type BacktestV2Result = {
+  id: number; profile_id: number; name: string | null
+  start_date: string; end_date: string
+  initial_capital: number; market_filter: string
+  strategy_hash: string; run_hash: string
+  stock_universe: { ticker: string; group: string }[]
+  metrics: BacktestV2Metrics
+  diagnosis: BacktestDiagnosis | null
+  duration_secs: number | null
+  stock_count: number | null; trading_days: number | null
+  status: string; error_message: string | null
+  created_at: string
+}
+export type BacktestDiagnosis = {
+  highlights: string[]; warnings: string[]; suggestions: string[]
+  by_trend: Record<string, { count: number; win_rate: number; avg_pnl: number }>
+  by_tier: Record<string, { count: number; win_rate: number; avg_pnl: number }>
+  stop_efficiency: { count: number; avg_loss_pct: number; pct_of_total: number }
+  target_efficiency: { count: number; avg_gain_pct: number; pct_of_total: number }
+  mae_mfe_analysis: Record<string, number>
+}
+export type BacktestV2Trade = {
+  id: number; ticker: string; market: string; stock_group: string | null
+  signal_date: string; fill_date: string; fill_price: number
+  entry_source: string | null; position_tier: string | null
+  conditions_met: number | null; position_size_pct: number | null
+  exit_date: string | null; exit_price: number | null; exit_reason: string | null
+  planned_rr: number | null; actual_rr: number | null
+  pnl_pct: number | null; pnl_amount: number | null
+  trade_cost: number | null; net_pnl: number | null; holding_days: number | null
+  mae_pct: number | null; mfe_pct: number | null
+  smc_trend_at_entry: string | null; smc_trend_at_exit: string | null
+}
+export type BacktestV2EquityPoint = {
+  trade_date: string; equity: number; drawdown_pct: number | null
+  cash: number | null; positions_value: number | null; open_positions: number | null
+}
+export type BacktestV2Compare = {
+  profile_a: { id: number; name: string; metrics: BacktestV2Metrics }
+  profile_b: { id: number; name: string; metrics: BacktestV2Metrics }
+  params_diff: { key: string; a: unknown; b: unknown }[]
+  metrics_comparison: Record<string, { a: number; b: number }>
+  equity_a: { date: string; equity: number }[]
+  equity_b: { date: string; equity: number }[]
+}
+export type StrategySignal = {
+  id: number; ticker: string | null; signal_date: string
+  signal_action: string; signal_entry: number | null
+  signal_stop: number | null; signal_target: number | null
+  signal_rr: number | null; signal_tier: string | null
+  signal_conditions: number | null
+  followed: boolean | null; actual_entry: number | null
+  actual_pnl_pct: number | null
+  outcome_if_followed: number | null
+  skip_reason: string | null; notes: string | null
+  created_at: string
+}
+
+// ── Scanner Types ─────────────────────────────────────────
+export type ScanResult = {
+  ticker: string
+  market: string
+  name: string | null
+  close_price: number
+  change_pct: number
+  volume: number
+  avg_volume_20: number
+  volume_ratio: number
+  consecutive_up_days: number
+  cumulative_gain_pct: number
+  is_52w_high: boolean
+  is_20d_high: boolean
+  vol_acceleration: number
+  explosion_score: number
+  signals: string[]
+}
+
+export type ScanResponse = {
+  scan_date: string | null
+  tracked_count: number
+  external_count: number
+  total_count: number
+  results: ScanResult[]
+  message?: string
+}
 
 export const SSE_URL = `${BASE}/sse/progress`

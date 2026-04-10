@@ -16,7 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
 from ..models.stock import Stock
+from ..models.user import User
 from ..models.ai_note import AiAnalysisNote
+from ..services.auth import get_optional_user
 
 router = APIRouter(prefix="/ai-notes", tags=["ai-notes"])
 
@@ -54,12 +56,17 @@ def _note_to_dict(note: AiAnalysisNote, ticker: str | None = None) -> dict:
         "target_price": float(note.target_price) if note.target_price else None,
         "rr_ratio": float(note.rr_ratio) if note.rr_ratio else None,
         "scenarios": note.scenarios,
+        "created_by": note.created_by,
         "created_at": note.created_at.isoformat() if note.created_at else None,
     }
 
 
 @router.post("")
-async def create_ai_note(body: AiNoteCreate, db: AsyncSession = Depends(get_db)):
+async def create_ai_note(
+    body: AiNoteCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
     """建立 AI 分析筆記"""
     ticker = body.ticker.upper()
     result = await db.execute(select(Stock).where(Stock.ticker == ticker))
@@ -81,6 +88,7 @@ async def create_ai_note(body: AiNoteCreate, db: AsyncSession = Depends(get_db))
         target_price=body.target_price,
         rr_ratio=body.rr_ratio,
         scenarios=body.scenarios,
+        created_by=user.id if user else None,
     )
     db.add(note)
     await db.commit()

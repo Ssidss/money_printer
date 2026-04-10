@@ -1,7 +1,9 @@
 import Link from "next/link"
 import { api } from "@/lib/api"
 import { AnalyzeButton } from "@/components/dashboard/AnalyzeButton"
+import { BatchFetchButton } from "@/components/dashboard/BatchFetchButton"
 import { TopPickCard } from "@/components/dashboard/TopPickCard"
+import { HoldingsSection } from "@/components/dashboard/HoldingsSection"
 import type { TopPick, SmcTrendMTF } from "@/lib/api"
 
 export const revalidate = 60
@@ -59,42 +61,16 @@ function TrendBadge({ trend }: { trend?: string }) {
   )
 }
 
-function MTFMini({ mtf }: { mtf: SmcTrendMTF }) {
-  const frames = [
-    { label: "月", trend: mtf.monthly },
-    { label: "週", trend: mtf.weekly },
-    { label: "日", trend: mtf.daily },
-  ]
-  return (
-    <div className="flex items-center gap-1">
-      {frames.map(f => {
-        const lbl = TREND_LABEL[f.trend] ?? "未知"
-        const icon = TREND_ICON[lbl] ?? "?"
-        const color = lbl.includes("上升") || lbl === "弱上升" ? "text-green-600"
-          : lbl.includes("下降") || lbl === "弱下降" ? "text-red-500"
-          : "text-yellow-600"
-        return (
-          <span key={f.label} className={`text-xs ${color}`} title={`${f.label}線: ${lbl}`}>
-            {f.label}{icon}
-          </span>
-        )
-      })}
-    </div>
-  )
-}
-
 export default async function Dashboard() {
-  const [picks, latest, holdings, statusRes, trendsRes] = await Promise.allSettled([
+  const [picks, latest, statusRes, trendsRes] = await Promise.allSettled([
     api.topPicks(3),
     api.latestAnalysis(),
-    api.holdings(),
     api.analysisStatus(),
     api.smcTrendsMTF(),
   ])
 
   const topPicks     = picks.status === "fulfilled" ? picks.value : []
   const latestRes    = latest.status === "fulfilled" ? latest.value : null
-  const holdingsList = holdings.status === "fulfilled" ? holdings.value : []
   const isRunning    = statusRes.status === "fulfilled" ? statusRes.value.running : false
   const trendsMTF    = trendsRes.status === "fulfilled" ? trendsRes.value : {} as Record<string, SmcTrendMTF>
   const allStocks: TopPick[] = latestRes?.results ?? []
@@ -114,15 +90,18 @@ export default async function Dashboard() {
             {latestRes?.date ? `最新分析：${latestRes.date}` : "尚無分析資料"}
           </p>
         </div>
-        <AnalyzeButton initialRunning={isRunning} />
+        <div className="flex items-center gap-3">
+          <BatchFetchButton />
+          <AnalyzeButton initialRunning={isRunning} />
+        </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
         {[
           { label: "追蹤股票", value: allStocks.length || 0 },
-          { label: "目前持倉", value: holdingsList.length },
           { label: "分析日期", value: latestRes?.date ?? "—" },
+          { label: "股票數", value: `US ${allStocks.filter(s => s.market === "US").length} / TW ${allStocks.filter(s => s.market === "TW").length}` },
         ].map((s) => (
           <div key={s.label} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-slate-500 text-xs uppercase tracking-wide">{s.label}</p>
@@ -147,73 +126,8 @@ export default async function Dashboard() {
         )}
       </div>
 
-      {/* 持倉速覽 */}
-      {holdingsList.length > 0 && (
-        <div>
-          <h2 className="text-lg font-semibold text-slate-800 mb-4">
-            持倉速覽
-            <span className="ml-2 text-sm font-normal text-slate-400">（點股票名稱進入 SMC 分析）</span>
-          </h2>
-          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wide">
-                  <th className="text-left px-4 py-3">股票</th>
-                  <th className="text-right px-4 py-3">當前價</th>
-                  <th className="text-right px-4 py-3">均成本</th>
-                  <th className="text-right px-4 py-3">損益</th>
-                  <th className="text-right px-4 py-3">停損</th>
-                  <th className="text-right px-4 py-3">停利</th>
-                  <th className="text-center px-4 py-3">SMC 趨勢</th>
-                  <th className="text-center px-4 py-3">MTF</th>
-                  <th className="text-center px-4 py-3">建議</th>
-                </tr>
-              </thead>
-              <tbody>
-                {holdingsList.map((h) => {
-                  const curr = priceMap[h.ticker]
-                  const pnlPct = curr ? ((curr - h.avg_cost) / h.avg_cost * 100) : null
-                  const mtf = trendsMTF[h.ticker]
-                  const isNearStop = curr && curr <= h.stop_loss_price * 1.03
-                  return (
-                    <tr key={h.ticker} className={`border-t border-slate-100 hover:bg-slate-50 ${isNearStop ? "bg-red-50/50" : ""}`}>
-                      <td className="px-4 py-3">
-                        <Link href={`/stocks/${h.ticker}`} className="font-semibold text-indigo-600 hover:underline">
-                          {h.ticker}
-                        </Link>
-                        <span className="ml-2 text-xs bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded">{h.market}</span>
-                        {isNearStop && <span className="ml-2 text-xs text-red-500 font-medium">⚠ 接近停損</span>}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium text-slate-800">
-                        {curr ? curr.toFixed(2) : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-500">{h.avg_cost.toFixed(2)}</td>
-                      <td className={`px-4 py-3 text-right font-semibold ${pnlPct === null ? "text-slate-400" : pnlPct >= 0 ? "text-green-600" : "text-red-500"}`}>
-                        {pnlPct === null ? "—" : `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%`}
-                      </td>
-                      <td className="px-4 py-3 text-right text-red-500">{h.stop_loss_price.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-green-600">{h.take_profit_price.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <TrendBadge trend={mtf?.daily} />
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {mtf && <MTFMini mtf={mtf} />}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {mtf?.action && (
-                          <span className={`text-xs px-2 py-0.5 rounded font-medium ${ACTION_BADGE[mtf.action] ?? "bg-slate-100 text-slate-500"}`}>
-                            {mtf.action}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      {/* 持倉速覽 — client component，需要登入才看得到 */}
+      <HoldingsSection priceMap={priceMap} trendsMTF={trendsMTF} />
 
       {/* All Tracked Stocks */}
       <div>

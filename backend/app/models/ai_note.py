@@ -53,6 +53,12 @@ class AiAnalysisNote(Base):
     # 額外結構化資料（如情境分析、觸發條件等）
     scenarios: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
+    # 紀錄是誰產的（nullable = 相容舊資料 / CLI 執行）
+    created_by: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, default=datetime.utcnow)
 
     stock: Mapped["Stock"] = relationship(back_populates="ai_notes")  # type: ignore
+    creator: Mapped[Optional["User"]] = relationship(foreign_keys=[created_by])  # type: ignore
