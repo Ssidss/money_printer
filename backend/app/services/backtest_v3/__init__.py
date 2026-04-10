@@ -1,0 +1,21 @@
+# Backtest V3 — Multi-Strategy Engine
+# Phase 1A: Signal → Decision → Order → Fill → Position
+
+from .models import (
+    Signal, Decision, Order, Position, Portfolio,
+    SizingModel, ExecutionModel, KillSwitch,
+)
+from .provider import DataProvider, HistoricalProvider
+from .strategy import BaseStrategy
+from .engine import BacktestEngine
+from .metrics import calculate_metrics
+from .strategies import SMCStrategy
+
+__all__ = [
+    "Signal", "Decision", "Order", "Position", "Portfolio",
+    "SizingModel", "ExecutionModel", "KillSwitch",
+    "DataProvider", "HistoricalProvider",
+    "BaseStrategy", "BacktestEngine",
+    "calculate_metrics",
+    "SMCStrategy",
+]
