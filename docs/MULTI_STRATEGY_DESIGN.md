@@ -2,7 +2,7 @@
 
 > 目標：自己交易賺錢，先賺錢再說（工程夠用就好，不過度抽象）
 > 最高原則：**先證明 alpha 存在再擴展**
-> 狀態：v3 — Final spec，可以開工
+> 狀態：v3.1 — Final spec，可以開工
 > 最後更新：2026-04-10
 
 ---
@@ -189,12 +189,22 @@ class Decision:
     action: str                 # "open" | "close" | "reduce" | "hold"
     side: str                   # "long"
     size_pct: float             # 佔資金池的 %（由 sizing model 計算）
-    size_shares: Optional[int]  # 實際股數（execution 階段算）
+    size_shares: Optional[int] = None  # Execution 階段填入，Decision 不負責算
     strategy_name: str          # 主要來源策略
     capital_pool: str = "default"  # 分帳戶模式："core" | "momentum" | "explosion" | "default"
     reason: str                 # 人可讀的決策理由
     linked_signal_ids: list[str]  # 關聯的 signal_id（可多個）
     priority: int = 0           # 同天多個 decision 的優先順序
+```
+
+### 職責邊界（鐵律）
+
+```
+Decision 只表達「意圖」（想買多少風險）
+SizingModel 算出「目標股數」
+Execution 根據實際資金與開盤價算「最終成交股數」→ 填回 size_shares
+
+❌ 不能在 Decision 和 Execution 各算一次部位
 ```
 
 ### Signal → Decision 的轉換邏輯
@@ -317,6 +327,13 @@ class SizingModel:
         # if remaining_risk_budget < risk_amount:
         #     shares = int(remaining_risk_budget / risk_per_share)
         return shares
+
+    # ── Portfolio Risk 計算統一口徑 ──
+    # position_risk = abs(current_effective_stop - entry_price) × shares
+    # 若 trailing stop 已上移 → 用最新 stop（risk 可能趨近 0）
+    # 若浮盈已超過 1R → risk 視為 0（保本停損）
+    # current_total_risk = sum(所有 open position 的 position_risk)
+    # 回測與實盤必須用同一算法
 ```
 
 ### 沒有 stop 的信號怎麼辦
@@ -328,6 +345,8 @@ class SizingModel:
 ---
 
 ## 七、Execution 規則（六條鐵律）
+
+> **v3 僅支援 long-only。** 若未來加入 short，需重新定義 short 倉位的保守 intraday path（Open→High→Low→Close）與 gap 規則。
 
 ### 鐵律 1：信號與執行分離
 
@@ -516,7 +535,7 @@ class Portfolio:
 | Exposure % | 平均曝險比例 |
 | Max Consecutive Losses | 最大連續虧損次數 |
 | Calmar Ratio | CAGR / Max Drawdown（越高越好，>1 算不錯）|
-| Tail Risk (VaR 5%) | 最差 5% 交易的平均虧損（尾部風險衡量）|
+| Tail Risk (CVaR 5%) | 最差 5% 交易的平均虧損（Expected Shortfall）|
 
 ### Level 2：Strategy Breakdown
 
@@ -708,19 +727,27 @@ Phase 2 的回測報表會產出策略相關性矩陣，用來驗證這個假設
 ### 原則：系統失控時自動停機，不靠人的紀律
 
 ```
-系統失敗條件（任一觸發 → 停止所有新開倉，僅允許平倉）：
+A. Research Gate（策略是否允許上線）
 
-1. Test 段 Sharpe < 0.3        → 策略沒有真正的 edge
-2. 即時 MDD > 30%              → 虧損已超出可接受範圍
-3. 連續虧損 > 15 筆             → 可能市場 regime 改變或策略失效
-4. 單日虧損 > 5% 總資金         → 異常事件，先停再查
-5. 策略報酬偏離 Validation > 2σ  → 可能過擬合或市場結構性改變
+  1. Test 段 Sharpe < 0.3         → 策略沒有真正的 edge，不准上線
+  2. Test 與 Validation 方向不一致  → 可能過擬合，不准上線
+  3. OOS 結果偏離 Validation > 2σ  → 結構性問題，回去 debug
 
-觸發後行動：
-  - 停止開新倉
-  - 已持倉按正常停損/停利出場
-  - 生成診斷報告（最近 30 天 trade log + metrics drift）
-  - 人工 review 後手動重啟
+  ❌ 沒通過 Research Gate 的策略，連 paper trading 都不做
+
+B. Runtime Kill Switch（運行中即時熔斷）
+
+  1. 即時 MDD > 30%              → 虧損已超出可接受範圍
+  2. 連續虧損 > 15 筆             → 可能市場 regime 改變或策略失效
+  3. 單日虧損 > 5% 總資金         → 異常事件，先停再查
+  4. Rolling 60-day Sharpe < 0     → 策略近期完全無效
+  5. 策略即時報酬偏離 Validation > 2σ → 市場結構性改變
+
+  觸發後行動：
+    - 停止開新倉
+    - 已持倉按正常停損/停利出場
+    - 生成診斷報告（最近 30 天 trade log + metrics drift）
+    - 人工 review 後手動重啟
 ```
 
 ### 回測中的 Kill Switch
@@ -731,7 +758,7 @@ class KillSwitch:
     max_drawdown_pct: float = 30.0
     max_consecutive_losses: int = 15
     max_daily_loss_pct: float = 5.0
-    min_sharpe_threshold: float = 0.3    # rolling 60-day Sharpe
+    min_rolling_sharpe: float = 0.0      # rolling 60-day Sharpe < 0 → 熔斷
     enabled: bool = True
 
     def check(self, portfolio) -> Optional[str]:
@@ -891,12 +918,15 @@ class KillSwitch:
 - Execution 從 4 條鐵律擴充為 6 條鐵律（出場價格模型 + 不可竄改已完成交易）
 - ExecutionModel 新增 gap_stop_enabled / path_assumption / min_trade_value 參數
 
-### v3 待 Review
+### v3 Review（2026-04-10，GPT-4）
 
-重點確認：
-1. 六條鐵律的完整性（特別是保守路徑 + gap stop 的實作邏輯）
-2. Kill Switch 的觸發條件是否合理（閾值設定）
-3. Portfolio risk cap 在 SizingModel 中的計算流程
-4. 策略相關性硬限制 60% 是否合適
-5. Calmar Ratio / Tail Risk 的計算方式
-6. Phase 1A 是否可以開始實作
+評分：9.3 / 10 — **可以開工，沒有大毛病**
+
+採納的修正（5 個中小問題）：
+1. **Decision.size_shares 職責邊界** — size_shares 改為 Execution 填入，Decision 只表達意圖 ✅
+2. **Portfolio risk cap 精確算法** — 統一口徑：用當前有效 stop 計算，trailing stop 上移後 risk 跟著降 ✅
+3. **Tail Risk 命名** — VaR 5% → CVaR 5% (Expected Shortfall)，術語更精確 ✅
+4. **Kill Switch 分類** — 拆為 Research Gate（上線前）+ Runtime Kill Switch（運行中）✅
+5. **Long-only 聲明** — 鐵律僅適用 long，short 需重新定義保守路徑 ✅
+
+結論：**設計已過危險區，進入實作。接下來最大風險不是設計錯，而是實作偷偷偏離 spec。**
