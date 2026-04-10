@@ -1,7 +1,8 @@
-# Multi-Strategy Trading System — Design Document
+# Multi-Strategy Trading System — Design Document v2
 
 > 目標：自己交易賺錢，先賺錢再說（工程夠用就好，不過度抽象）
-> 狀態：設計階段，待 Review
+> 最高原則：**先證明 alpha 存在再擴展**
+> 狀態：v2 — 已通過外部 Review，準備開工
 > 最後更新：2026-04-10
 
 ---
@@ -17,7 +18,7 @@
 | SMC v2 結構分析 | ✅ 完成 | OB/FVG/BOS/CHoCH/Fib |
 | 分層決策 | ✅ 完成 | SMC → 動量 → 催化劑 → 條件計數 |
 | 回測 v2 | ✅ 完成 | 綁死 SMC 策略，close fill 74% 勝率 |
-| 量價異常掃描器 | ✅ 完成 | 6 指標爆擊分數，追蹤股+外部池 |
+| 量價異常掃描器 | ✅ 完成 | 6 指標爆擊分數，追蹤股+外部池，前後端已上線 |
 | 多租戶/認證 | ✅ 完成 | JWT + per-user portfolio |
 
 ### 目前的問題
@@ -27,6 +28,8 @@
 3. **Signal 沒有標準化**，不同模組的輸出格式不一致
 4. **沒有 Position/Portfolio 抽象**，回測中的持倉管理是 ad-hoc 的
 5. **數據取用沒有統一介面**，策略直接 call DB
+6. **沒有資料切分規範**，回測結果可能過擬合
+7. **缺少關鍵 metrics**（CAGR, Sharpe, expectancy）
 
 ### 現有回測基線（SMC Strategy D/G）
 
@@ -38,91 +41,93 @@
 | Win Rate | 74% |
 | Max Drawdown | -22% |
 | Profit Factor | 2.76 |
-| CAGR | 待補算 |
-| Sharpe | 待補算 |
+| CAGR | 待補算（Phase 1A 完成後） |
+| Sharpe | 待補算（Phase 1A 完成後） |
 
 ---
 
 ## 二、目標架構
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    Data Layer（數據層）                    │
-│                                                          │
-│  DataProvider interface                                   │
-│  ├── PriceProvider    → OHLCV, realtime                  │
-│  ├── IndicatorProvider → MA, ATR, RSI, MACD, BB, Volume  │
-│  ├── SentimentProvider → news score, social mentions     │
-│  ├── MarketProvider   → VIX, SPY/QQQ trend, regime      │
-│  └── (future) OptionsProvider, FundamentalProvider       │
-│                                                          │
-│  策略不直接碰 DB，全部透過 Provider 取數據                  │
-│  Provider 可以 mock（回測用 historical）或 live（實盤用）    │
-└──────────────────────┬───────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    Data Layer（數據層）                        │
+│                                                              │
+│  DataProvider interface                                       │
+│  ├── get_ohlcv(ticker, lookback)                             │
+│  ├── get_latest_price(ticker)                                │
+│  ├── get_indicators(ticker) → RSI, MACD, MA, ATR, BB, Vol   │
+│  ├── get_sentiment(ticker) → score, label                    │
+│  ├── get_market_regime() → VIX, SPY trend, regime            │
+│  ├── get_universe() → tradable tickers                       │
+│  ├── is_tradable(ticker) → bool                              │
+│  ├── current_date() / advance_day()                          │
+│  └── (future) get_options(), get_fundamentals()              │
+│                                                              │
+│  實作：HistoricalProvider（回測）/ LiveProvider（實盤）          │
+│  策略不直接碰 DB，全部透過 Provider，可 mock                     │
+└──────────────────────┬───────────────────────────────────────┘
                        │
-┌──────────────────────▼───────────────────────────────────┐
-│                  Strategy Layer（策略層）                   │
-│                                                          │
-│  BaseStrategy interface:                                  │
-│    generate_signals(ticker, provider) → list[Signal]      │
-│                                                          │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐      │
-│  │  SMC v2      │ │  Momentum    │ │  Explosion   │ ...  │
-│  │  (現有改裝)   │ │  Breakout    │ │  Scanner     │      │
-│  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘      │
-│         │                │                │              │
-│         ▼                ▼                ▼              │
-│                   Signal（統一格式）                       │
-└──────────────────────┬───────────────────────────────────┘
+┌──────────────────────▼───────────────────────────────────────┐
+│                  Strategy Layer（策略層）                       │
+│                                                              │
+│  BaseStrategy.generate_signals(ticker, provider) → Signal[]   │
+│                                                              │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐          │
+│  │  SMC v2      │ │  Momentum    │ │  Explosion   │ ...      │
+│  │  (trend)     │ │  (breakout)  │ │  (breakout)  │          │
+│  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘          │
+│         │                │                │                  │
+│         ▼                ▼                ▼                  │
+│                   Signal（統一格式）                           │
+│          含 signal_id / side / timeframe / expiry             │
+└──────────────────────┬───────────────────────────────────────┘
                        │
-┌──────────────────────▼───────────────────────────────────┐
-│                Decision Layer（決策層）                     │
-│                                                          │
-│  DecisionEngine:                                          │
-│    signals[] → decisions[]                                │
-│                                                          │
-│  模式：                                                   │
-│    A. 單策略直通（只聽某一個策略）                            │
-│    B. 同類投票（同 type 的策略投票）                         │
-│    C. 加權（按近期表現動態調權重）                            │
-│    D. 分帳戶（每個策略獨立資金池）                            │
-└──────────────────────┬───────────────────────────────────┘
+┌──────────────────────▼───────────────────────────────────────┐
+│                Decision Layer（決策層）                         │
+│                                                              │
+│  Signal[] → Decision[] → Order[]                              │
+│                                                              │
+│  DecisionEngine 模式：                                        │
+│    A. 單策略直通                                               │
+│    B. 分帳戶（每策略獨立資金池）← Phase 3 首選                    │
+│    C. 同類投票 + 不同類分資金                                    │
+│    D. 動態加權（按近期表現）                                     │
+│                                                              │
+│  Position Sizing:                                             │
+│    固定風險模型：每筆承擔 account_risk% / (entry - stop)         │
+└──────────────────────┬───────────────────────────────────────┘
                        │
-┌──────────────────────▼───────────────────────────────────┐
-│              Execution Layer（執行層）                      │
-│                                                          │
-│  Decision → Order → Fill → Position                       │
-│                                                          │
-│  Portfolio:                                               │
-│    cash, positions[], equity_curve                         │
-│  Position:                                                │
-│    ticker, size, entry_price, stop, current_pnl           │
-│  ExecutionModel:                                          │
-│    fill_model (market/limit/close)                         │
-│    slippage, commission                                    │
-│    T+1 rule（信號日 T → 執行日 T+1 開盤）                   │
-└──────────────────────┬───────────────────────────────────┘
+┌──────────────────────▼───────────────────────────────────────┐
+│              Execution Layer（執行層）                          │
+│                                                              │
+│  Order → Fill → Position → Portfolio                          │
+│                                                              │
+│  嚴格規則：                                                    │
+│    1. Day T close 產生信號                                     │
+│    2. Day T+1 open 嘗試成交                                    │
+│    3. 跳空超過閾值 → 可取消交易                                  │
+│    4. 出場觸發價格模型固定（日內 high/low or 收盤）               │
+│    5. slippage + commission 扣除                               │
+└──────────────────────┬───────────────────────────────────────┘
                        │
-┌──────────────────────▼───────────────────────────────────┐
-│              Backtest Engine（回測引擎）                    │
-│                                                          │
-│  通用引擎，不綁任何策略：                                    │
-│    輸入：Strategy + 股票池 + 時間範圍 + 初始資金              │
-│    每天：provider.advance_day() → strategy.generate()      │
-│          → decision → execution → position update          │
-│    輸出：統一 metrics（return, MDD, Sharpe, PF, win_rate） │
-│                                                          │
-│  支援：                                                   │
-│    - 單策略回測                                            │
-│    - 多策略組合回測（Ensemble）                              │
-│    - A vs B 策略比較                                       │
-│    - 參數掃描（grid search）                                │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────▼───────────────────────────────────────┐
+│              Backtest Engine（回測引擎）                        │
+│                                                              │
+│  通用引擎，不綁任何策略：                                        │
+│    輸入：Strategy + 股票池 + 時間範圍 + 初始資金                  │
+│    每天：provider.advance_day() → strategy.generate()          │
+│          → decision → execution → position update              │
+│    輸出：三層報表（Portfolio / Strategy / Trade）                │
+│                                                              │
+│  資料切分（鐵律）：                                              │
+│    Train (調參) → Validation (選模型) → Test (只看一次)          │
+│    看過 test 後修改 → 必須重切資料重做                            │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 三、Signal 設計（核心中的核心）
+## 三、Signal 設計
 
 ### 原則：Signal = Opinion，不是 Trade
 
@@ -130,69 +135,128 @@
 @dataclass
 class Signal:
     # ── 必填 ──
+    signal_id: str              # UUID，追蹤信號生命週期
     ticker: str
-    action: str                     # "buy" | "sell" | "hold" | "watch"
-    confidence: float               # 0.0 ~ 1.0
-    strategy_name: str              # "smc_v2" | "momentum_breakout" | ...
-    strategy_type: str              # "trend" | "mean_reversion" | "breakout" | "sentiment"
-    timestamp: datetime             # 信號產生時間
-    expiry: datetime                # 信號過期時間（超過就作廢）
+    side: str                   # "long"（預留 short）
+    action: str                 # "buy" | "sell" | "hold" | "watch"
+    confidence: float           # 0.0 ~ 1.0
+    strategy_name: str          # "smc_v2" | "momentum_breakout" | ...
+    strategy_type: str          # "trend" | "breakout" | "mean_reversion" | "sentiment"
+    timeframe: str              # "1d" | "1w" | "1h"（避免不同時間框架混在一起）
+    timestamp: datetime         # 信號產生時間
+    expiry: datetime            # 信號過期時間（超過就作廢）
 
-    # ── 選填（策略自由填）──
+    # ── 選填 ──
     price_hint: Optional[dict] = None
     # {
-    #     "entry": 142.00,          # 建議進場價
-    #     "stop": 135.00,           # 建議停損
-    #     "target": 166.00,         # 目標價
-    #     "rr_ratio": 3.8,          # 風報比
-    #     "position_tier": "標準",   # 倉位等級
+    #     "entry": 142.00,
+    #     "stop": 135.00,
+    #     "target": 166.00,
+    #     "rr_ratio": 3.8,
+    #     "position_tier": "標準",
     # }
 
     meta: dict = field(default_factory=dict)
     # 策略專屬資訊，格式自由
-    # SMC: {"trend": "uptrend", "ob_level": 142.5, "fvg_zone": [140, 143]}
-    # Momentum: {"breakout_level": 150, "volume_ratio": 3.5}
+    # SMC: {"trend": "uptrend", "ob_level": 142.5, "conditions_met": 3}
+    # Momentum: {"breakout_level": 150, "volume_ratio": 3.5, "atr": 4.2}
 ```
 
-### 為什麼這樣設計
+### 設計決策
 
-| 設計決策 | 原因 |
-|---------|------|
+| 欄位 | 為什麼 |
+|------|--------|
+| `signal_id` | 追蹤哪個信號開倉/失效，回測 trade log 必須 |
+| `side` | 現在只做 long，但先留欄位避免未來改資料結構 |
+| `timeframe` | SMC 日線 vs breakout 週線不能混，決策層需要知道 |
+| `expiry` | breakout 信號可能只有 1-2 天有效，過期就不該執行 |
 | `price_hint` optional | 情緒策略沒有 entry/stop，不該強制 |
-| `expiry` 必填 | 防止信號過期還在用，尤其是 breakout 信號時效很短 |
-| `strategy_type` 必填 | 決策層要知道「這是趨勢類還是均值回歸類」，同類投票 |
-| `confidence` 必填 | 決策層需要權重依據 |
-| `meta` 自由格式 | 每個策略的內部資訊不同，不該強制統一 |
+| `confidence` | 決策層需要權重依據 |
+| `meta` 自由格式 | 每個策略的內部資訊不同 |
 
 ---
 
-## 四、DataProvider 設計
+## 四、Decision 設計
+
+### 原則：Signal 是意見，Decision 是行動
+
+同一個 ticker 可能同時收到 3 個 signals，但 portfolio 只能做 1 個決策。
+
+```python
+@dataclass
+class Decision:
+    ticker: str
+    action: str                 # "open" | "close" | "reduce" | "hold"
+    side: str                   # "long"
+    size_pct: float             # 佔資金池的 %（由 sizing model 計算）
+    size_shares: Optional[int]  # 實際股數（execution 階段算）
+    strategy_name: str          # 主要來源策略
+    reason: str                 # 人可讀的決策理由
+    linked_signal_ids: list[str]  # 關聯的 signal_id（可多個）
+    priority: int = 0           # 同天多個 decision 的優先順序
+```
+
+### Signal → Decision 的轉換邏輯
+
+```
+同一 ticker 多個 signals 的處理：
+
+1. 分帳戶模式：
+   每個策略的 signal 獨立轉成 decision，互不影響
+
+2. 投票模式：
+   同 strategy_type 的 signals 投票
+   action 多數決，confidence 取最高
+   不同 strategy_type 的 signals 分開處理
+
+3. 加權模式：
+   score = sum(confidence × weight) for each signal
+   score > threshold → decision = buy
+```
+
+---
+
+## 五、DataProvider 設計
 
 ### 原則：策略不碰 DB，不碰 API
 
 ```python
-class DataProvider:
+class DataProvider(ABC):
     """策略的唯一數據來源"""
 
-    # 價格
+    # ── 價格 ──
+    @abstractmethod
     def get_ohlcv(self, ticker: str, lookback: int = 252) -> pd.DataFrame: ...
+    @abstractmethod
     def get_latest_price(self, ticker: str) -> float: ...
 
-    # 技術指標（provider 算好，策略直接拿）
+    # ── 技術指標 ──
+    @abstractmethod
     def get_indicators(self, ticker: str) -> dict: ...
-    # {"rsi_14": 65.3, "macd": 2.1, "ma_20": 150.5, "atr_14": 3.2, ...}
+    # {"rsi_14": 65.3, "macd": 2.1, "ma_20": 150.5, "atr_14": 3.2, "bb_upper": ..., ...}
 
-    # 情緒
+    # ── 情緒 ──
+    @abstractmethod
     def get_sentiment(self, ticker: str) -> Optional[dict]: ...
     # {"score": 72, "label": "正面", "article_count": 5}
 
-    # 市場狀態
+    # ── 市場狀態 ──
+    @abstractmethod
     def get_market_regime(self) -> dict: ...
     # {"vix": 18.5, "spy_trend": "uptrend", "regime": "trending"}
 
-    # 回測專用：推進到下一天
-    def advance_day(self) -> date: ...
+    # ── 股票池 ──
+    @abstractmethod
+    def get_universe(self) -> list[str]: ...
+    @abstractmethod
+    def is_tradable(self, ticker: str) -> bool: ...
+    # 停牌 / 資料不足 / 流動性太差 → False
+
+    # ── 時間控制（回測用）──
+    @abstractmethod
     def current_date(self) -> date: ...
+    @abstractmethod
+    def advance_day(self) -> date: ...
 ```
 
 ### 兩種實作
@@ -202,66 +266,142 @@ class DataProvider:
 | `HistoricalProvider` | 從 DB 載入歷史數據，advance_day() 模擬時間推進 | 回測 |
 | `LiveProvider` | 從 DB + yfinance 即時數據 | 實盤信號產生 |
 
-### 為什麼不讓策略自己撈數據
+### is_tradable 過濾條件
 
-1. **回測無法 mock** — 策略直接 call DB，回測時無法控制「它看到哪天的數據」
-2. **Lookahead bias** — 策略可能不小心看到未來數據
-3. **耦合** — 換數據源（例如從 yfinance 換到 polygon）要改每個策略
+- 價格資料不足 lookback 天 → False
+- 近 5 天平均成交量 < 100,000 → False（流動性不足）
+- 近 5 天有缺資料（停牌/暫停交易）→ False
 
 ---
 
-## 五、Execution / Position / Portfolio
+## 六、Position Sizing（一級公民）
 
-### 關鍵流程
-
-```
-Signal → Decision → Order → Fill → Position → PnL
-
-具體：
-Day T 收盤後：
-  1. provider 更新到 Day T 數據
-  2. strategy.generate_signals() 基於 Day T 數據
-  3. decision_engine 決定要不要執行
-  4. 產生 Order（buy NVDA, market, size=5%）
-
-Day T+1 開盤：
-  5. execution_model.fill(order, T+1 open price)
-  6. 扣除 slippage + commission
-  7. 建立 Position
-  8. portfolio.update()
-```
-
-### 防 Lookahead Bias（致命重要）
+### 原則：用風險控制倉位大小，不用固定比例
 
 ```
-❌ 錯誤：Day T 收盤信號 → Day T 收盤價成交
-✅ 正確：Day T 收盤信號 → Day T+1 開盤價成交
+❌ 固定比例：每筆投 10% 資金
+   問題：停損 2% 的股票和停損 15% 的股票，風險完全不同
 
-❌ 錯誤：用 Day T 的 high/low 判斷是否觸及 entry
-✅ 正確：用 Day T-1 的數據產生信號，Day T 的 open 成交
+✅ 固定風險：每筆承擔總資金 X% 的風險
+   size = (account × risk_per_trade) / (entry - stop)
 ```
+
+### Position Sizing Model
+
+```python
+@dataclass
+class SizingModel:
+    risk_per_trade_pct: float = 1.0   # 每筆最多虧總資金的 1%
+    max_position_pct: float = 20.0    # 單支最大不超過 20%
+    max_positions: int = 10           # 最多同時持有 10 支
+    max_exposure_pct: float = 100.0   # 總曝險上限
+
+    def calculate_shares(
+        self, equity: float, entry: float, stop: float
+    ) -> int:
+        if entry <= stop:
+            return 0
+        risk_amount = equity * (self.risk_per_trade_pct / 100)
+        risk_per_share = entry - stop
+        shares = int(risk_amount / risk_per_share)
+        # 限制最大倉位
+        max_shares = int(equity * (self.max_position_pct / 100) / entry)
+        return min(shares, max_shares)
+```
+
+### 沒有 stop 的信號怎麼辦
+
+- 如果 `price_hint` 沒有 stop → 使用 ATR-based 預設停損
+- 預設停損 = entry - 2 × ATR(14)
+- 如果連 entry 都沒有 → 不開倉（watch/hold 信號不執行）
+
+---
+
+## 七、Execution 規則（四條鐵律）
+
+### 鐵律 1：信號與執行分離
+
+```
+Day T 收盤後 → 產生 Signal（基於 Day T 及之前的數據）
+Day T+1 開盤 → 嘗試執行 Fill
+```
+
+### 鐵律 2：跳空保護
+
+```
+if abs(T+1_open - T_close) / T_close > gap_threshold:
+    cancel_order()  # 跳空太大，取消交易
+
+gap_threshold = 5%（預設，可調）
+```
+
+### 鐵律 3：出場觸發模型
+
+```
+停損/停利的觸發：
+  使用 Day T+1 的 high/low 判斷是否觸及
+  觸及停損 → exit_price = stop_price（假設止損單成交）
+  觸及停利 → exit_price = target_price
+  都沒觸及 → 持倉繼續
+
+同一天同時觸及停損和停利：
+  保守假設 → 觸發停損（worst case）
+```
+
+### 鐵律 4：同天多信號優先順序
+
+```
+1. 先處理出場信號（close/reduce）→ 釋放資金
+2. 再處理進場信號（open）→ 按 confidence 降序
+3. 資金不足時 → 跳過低優先信號
+```
+
+### ExecutionModel
+
+```python
+@dataclass
+class ExecutionModel:
+    fill_type: str = "next_open"      # "next_open" | "next_close"
+    slippage_pct: float = 0.05        # 0.05% 滑價
+    commission_per_trade: float = 0   # 美股多數 $0
+    gap_threshold_pct: float = 5.0    # 跳空超過 5% 取消
+    stop_trigger: str = "intraday"    # "intraday"（用 high/low）| "close"（用收盤）
+```
+
+---
+
+## 八、Position & Portfolio
 
 ### Position
 
 ```python
 @dataclass
 class Position:
+    position_id: str            # UUID
     ticker: str
-    side: str               # "long" | "short"（目前只做 long）
-    size: int               # 股數
+    side: str                   # "long"
+    size: int                   # 股數
     entry_price: float
     entry_date: date
     stop_price: Optional[float]
     target_price: Optional[float]
-    strategy_name: str      # 哪個策略開的
+    strategy_name: str
+    linked_signal_id: str       # 開倉的 signal_id
 
-    # 動態更新
-    current_price: float
-    unrealized_pnl: float
-    unrealized_pnl_pct: float
-    mae: float              # Maximum Adverse Excursion
-    mfe: float              # Maximum Favorable Excursion
-    holding_days: int
+    # ── 動態更新（每天回測循環中更新）──
+    current_price: float = 0.0
+    unrealized_pnl: float = 0.0
+    unrealized_pnl_pct: float = 0.0
+    mae: float = 0.0            # Max Adverse Excursion（最大浮虧）
+    mfe: float = 0.0            # Max Favorable Excursion（最大浮盈）
+    holding_days: int = 0
+
+    # ── 平倉後填入 ──
+    exit_price: Optional[float] = None
+    exit_date: Optional[date] = None
+    exit_reason: Optional[str] = None   # "stop" | "target" | "signal_reversal" | "time_stop"
+    realized_pnl: Optional[float] = None
+    realized_pnl_pct: Optional[float] = None
 ```
 
 ### Portfolio
@@ -271,7 +411,9 @@ class Position:
 class Portfolio:
     initial_capital: float
     cash: float
-    positions: list[Position]
+    positions: list[Position]       # open positions
+    closed_trades: list[Position]   # closed positions（完整 trade log）
+    equity_curve: list[dict]        # [{"date": ..., "equity": ..., "drawdown_pct": ...}]
 
     @property
     def equity(self) -> float:
@@ -279,42 +421,106 @@ class Portfolio:
 
     @property
     def exposure_pct(self) -> float:
+        if self.equity <= 0:
+            return 0
         return (self.equity - self.cash) / self.equity * 100
 
-    equity_curve: list[dict]    # [{"date": ..., "equity": ..., "drawdown": ...}]
-```
-
-### ExecutionModel
-
-```python
-@dataclass
-class ExecutionModel:
-    fill_type: str = "next_open"    # "next_open" | "next_close" | "limit"
-    slippage_pct: float = 0.05      # 0.05% 滑價
-    commission_per_trade: float = 0  # 手續費（美股多數 $0）
-    max_position_pct: float = 20.0  # 單支最大倉位
-    max_positions: int = 10         # 最多同時持有
+    @property
+    def open_position_count(self) -> int:
+        return len(self.positions)
 ```
 
 ---
 
-## 六、策略清單（計劃中）
+## 九、回測報表（三層）
 
-### Phase 2 — 第一批策略
+### Level 1：Portfolio Summary
 
-| # | 策略名稱 | Type | 數據需求 | 說明 |
-|---|---------|------|---------|------|
-| 1 | **SMC v2** | trend | OHLCV | 現有改裝，OB/FVG/結構進出場 |
-| 2 | **Momentum Breakout** | breakout | OHLCV + Volume | 突破 N 日高 + 放量 → 追進，ATR trailing stop |
-| 3 | **Explosion Scanner** | breakout | OHLCV + Volume | 掃描器信號觸發（量比>5x + 漲幅>10%），快進快出 |
+| 指標 | 說明 |
+|------|------|
+| Total Return % | 總報酬 |
+| CAGR % | 年化報酬 |
+| Max Drawdown % | 最大回撤 |
+| Sharpe Ratio | 風險調整報酬 |
+| Sortino Ratio | 下行風險調整報酬 |
+| Profit Factor | 總獲利 / 總虧損 |
+| Win Rate % | 勝率 |
+| Total Trades | 總交易次數 |
+| Avg Holding Days | 平均持有天數 |
+| Expectancy | 期望值 = win_rate × avg_win - loss_rate × avg_loss |
+| Exposure % | 平均曝險比例 |
+| Max Consecutive Losses | 最大連續虧損次數 |
+
+### Level 2：Strategy Breakdown
+
+| 指標 | 說明 |
+|------|------|
+| 每個策略的獨立 metrics | 跟 Level 1 相同指標，按策略拆分 |
+| 按 market regime 拆分 | trending / ranging / volatile 各自績效 |
+| 按 position tier 拆分 | 核心 / 標準 / 探索 各自績效 |
+| 策略相關性矩陣 | 策略 A 和 B 的報酬是否高度相關 |
+
+### Level 3：Trade Log
+
+| 欄位 | 說明 |
+|------|------|
+| signal_id, strategy_name | 來源追蹤 |
+| ticker, entry_date, entry_price | 進場資訊 |
+| exit_date, exit_price, exit_reason | 出場資訊 |
+| pnl_pct, pnl_amount | 損益 |
+| mae, mfe | 最大浮虧/浮盈 |
+| holding_days | 持有天數 |
+| conditions_met, confidence | 信號品質 |
+
+---
+
+## 十、資料切分規範（鐵律）
+
+### 三段切分
+
+```
+Train:       2018-01-01 ~ 2022-12-31  （調參數用）
+Validation:  2023-01-01 ~ 2024-12-31  （選模型/策略用）
+Test:        2025-01-01 ~ 2026-04-10  （最終驗證，只看一次）
+```
+
+### 規則
+
+1. **Train 上調參** — 可以反覆調整策略參數
+2. **Validation 上選模型** — 比較不同策略/參數組合，選最好的
+3. **Test 只看一次** — 最終結果，不能回去改
+4. **看過 Test 後修改任何東西** → 必須重切資料，Test 段作廢
+5. **Walk-forward（進階）** — 滾動窗口驗證，Phase 4 再考慮
+
+### 最低標準
+
+一個策略要通過驗證：
+- Train 和 Validation 的 metrics 不能差太多（穩定性）
+- Validation 的 Sharpe > 0.5
+- Validation 的 Profit Factor > 1.5
+- Test 結果與 Validation 方向一致
+
+---
+
+## 十一、策略清單
+
+### Phase 2 — 第一批新策略
+
+| # | 策略名稱 | Type | 數據需求 | 工作量 | 說明 |
+|---|---------|------|---------|--------|------|
+| 1 | **SMC v2** | trend | OHLCV | 改裝 | 現有邏輯包成 BaseStrategy |
+| 2 | **Momentum Breakout** | breakout | OHLCV + Vol | 新寫 | 突破 N 日高 + 放量 → 追進，ATR trailing |
+| 3 | **Explosion Scanner** | breakout | OHLCV + Vol | 0.5 天 | 掃描器已做完，包成 Strategy wrapper |
+
+> Momentum 和 Explosion 都是 breakout 類型，共用 ATR trailing stop 基礎設施。
 
 ### Phase 4 — 第二批策略
 
-| # | 策略名稱 | Type | 數據需求 | 說明 |
-|---|---------|------|---------|------|
-| 4 | **Mean Reversion** | mean_reversion | OHLCV + BB + RSI | RSI 超賣 + 觸及 BB 下軌 → 反彈 |
-| 5 | **Sentiment Momentum** | sentiment | 新聞 + 社群 | 情緒突變 + 正面爆發 → 跟進 |
-| 6 | **Regime Adaptive** | meta | VIX + SPY | 根據市場狀態切換策略權重 |
+| # | 策略名稱 | Type | 數據需求 | 前置條件 |
+|---|---------|------|---------|---------|
+| 4 | **Mean Reversion** | mean_reversion | OHLCV + BB + RSI | 需要 regime detection |
+| 5 | **Sentiment Momentum** | sentiment | 新聞 + 社群 | 需要社群數據 |
+| 6 | **Regime Adaptive** | meta | VIX + SPY | 需要 market regime |
 
 ### 暫不做
 
@@ -324,42 +530,76 @@ class ExecutionModel:
 | 財報驅動 | 頻率太低（季度），ROI 不划算 |
 | 高頻/日內 | 需要即時數據 + 低延遲，架構不支援 |
 
+### 策略優先順序的考量
+
+GPT Review 建議把 Explosion 降到第 4，Mean Reversion 提前。
+我們的判斷：**不同意**。理由：
+1. Explosion Scanner 後端+前端已完成，包成 Strategy 只需 wrapper，工作量極低
+2. Mean Reversion 需要 regime detection 才能正確使用（盤整市才有效），這在 Phase 4
+3. Momentum 和 Explosion 都是 breakout 類，可以共用 ATR trailing 基建
+4. 先做兩個 breakout 策略 + 一個 trend 策略，驗證不同進場邏輯的差異
+
 ---
 
-## 七、決策引擎（Ensemble）
+## 十二、決策引擎
 
-### 階段 1：簡單模式
+### 演進路線（從簡到繁）
 
-```python
-class DecisionEngine:
-    mode: str  # "single" | "vote" | "weighted" | "split_account"
-
-    # 單策略：直接用某策略的信號
-    # 投票：同 strategy_type 的信號投票，多數決
-    # 加權：按 confidence × weight 加權
-    # 分帳戶：每個策略有獨立資金池
+```
+Phase 2:  單策略模式（各自獨立跑回測，不組合）
+Phase 3:  分帳戶模式（SMC 70% + Breakout 20% + Explosion 10%）
+Phase 4:  投票/加權模式（同類投票 + 不同類分資金）
+Phase 5:  動態加權 + Regime adaptive
 ```
 
-### 階段 2：進階模式
+### 為什麼分帳戶先於 Ensemble
 
-1. **動態權重** — 按近 30 天策略表現調整權重（表現好的加權）
-2. **Regime 切換** — 趨勢市用 trend/breakout，盤整市用 mean_reversion
-3. **相關性控制** — 兩個策略高度相關時，不要同時重倉
+1. 最容易落地，不需要解決策略衝突
+2. 最容易診斷績效來源（哪個桶賺/虧）
+3. 不會把不同策略的 edge 混在一起抵消掉
+4. trend 和 mean_reversion 常互相打架，分帳戶避免這問題
+
+### Phase 3 分帳戶建議配置
+
+```
+總資金 100%
+├── 核心帳戶 70%：SMC v2（高勝率、穩定）
+├── 動量帳戶 20%：Momentum Breakout（追突破）
+└── 搏擊帳戶 10%：Explosion Scanner（小注快打）
+```
 
 ### 策略衝突處理
 
 ```
-同類策略衝突（SMC vs Momentum，都是 trend 類）：
-  → 投票，多數決
+同類策略衝突（都是 breakout）：
+  → 投票，confidence 高的優先
+  → 或各自在子帳戶操作
 
-不同類策略衝突（Trend 看多 vs Mean Reversion 看空）：
-  → 不衝突！分帳戶各自操作
-  → 或者：regime 判斷當前適合哪類，聽那類的
+不同類策略衝突（trend 看多 vs mean_reversion 看空）：
+  → 分帳戶各自操作，不互相干擾
+  → Phase 5 用 regime 判斷當前適合哪類
 ```
 
 ---
 
-## 八、數據層擴充優先順序
+## 十三、Exit 規則
+
+### Phase 1-2：出場邏輯留在策略內部
+
+每個策略定義自己的出場規則：
+- **SMC v2**: OB/FVG 結構停損、結構目標停利
+- **Momentum**: ATR trailing stop
+- **Explosion**: 固定停損 -8%、移動停利
+
+### Phase 4+：如果發現共用模式，再抽象
+
+> 理由：SMC 的出場邏輯是其 edge 的核心部分，過早拆出來會破壞策略完整性。
+> 等 Phase 2 做完 Momentum 後，如果發現 ATR trailing 被 2+ 策略共用，再提取 ExitPolicy。
+> 這符合「先賺錢再說」— 不為假設的未來需求過度抽象。
+
+---
+
+## 十四、數據層擴充優先順序
 
 > 原則：先用最少數據支撐最多策略
 
@@ -368,12 +608,12 @@ class DecisionEngine:
 - [x] 技術指標（MA, RSI, MACD, BB, ATR, Volume）
 - [x] 新聞情緒
 
-### Tier 2（下一步，支撐 regime 判斷）
+### Tier 2（Phase 4，支撐 regime 判斷）
 - [ ] VIX 指數
 - [ ] SPY/QQQ 趨勢（已有但未結構化）
 - [ ] 市場 breadth（漲跌比、新高新低數）
 
-### Tier 3（再下一步，支撐社群策略）
+### Tier 3（Phase 5+，支撐社群策略）
 - [ ] Reddit/StockTwits 提及數 + 情緒
 - [ ] Google Trends 搜索量
 
@@ -384,82 +624,134 @@ class DecisionEngine:
 
 ---
 
-## 九、Roadmap
+## 十五、Roadmap（務實版）
 
-### Phase 1：基礎設施（策略可插拔）
+### Phase 1A：最小可回測引擎
 
-> 目標：讓系統「可擴展」，新策略接進來不用改引擎
+> 目標：SMC 能在新引擎跑出接近舊引擎的結果
+> 預計：2-3 天
 
-- [ ] Signal dataclass 定義（含 expiry, strategy_type）
-- [ ] DataProvider interface + HistoricalProvider 實作
+- [ ] Signal dataclass（含 signal_id / side / timeframe / expiry）
+- [ ] Decision dataclass
 - [ ] BaseStrategy interface
-- [ ] Position + Portfolio dataclass
-- [ ] ExecutionModel（T+1 open, slippage, commission）
-- [ ] Backtest v3 通用引擎（不綁策略）
-- [ ] 把現有 SMC v2 包成第一個 BaseStrategy 實作
-- [ ] 驗證：SMC 在新引擎的回測結果 ≈ 舊引擎（不能差太多）
+- [ ] HistoricalProvider（從 DB 載入，advance_day 模擬）
+- [ ] SizingModel（固定風險模型）
+- [ ] 最小 Backtest Engine（每日循環 → signal → decision → fill → position）
+- [ ] SMC v2 包成 BaseStrategy
+- [ ] 驗證：新引擎 vs 舊引擎回測結果對齊（誤差 < 5%）
+- [ ] 補算 SMC 基線 CAGR / Sharpe / Sortino
 
-### Phase 2：第二策略 + 驗證
+### Phase 1B：風控骨架
 
-> 目標：證明「多策略有用」，如果這裡沒 alpha 就不往下做
+> 目標：回測結果開始可信
+> 預計：1-2 天
+
+- [ ] Position（含 MAE/MFE 追蹤）
+- [ ] Portfolio（equity curve, drawdown）
+- [ ] ExecutionModel（T+1, slippage, gap protection）
+- [ ] 三層回測報表（Portfolio / Strategy / Trade log）
+- [ ] Train/Validation/Test 切分
+- [ ] 完整 metrics（expectancy, Sortino, consecutive losses, exposure）
+
+### Phase 2：第二+第三策略
+
+> 目標：找到獨立 edge
+> 預計：2-3 天
+> **關卡：如果新策略在 Validation 上沒有 Sharpe > 0.5，不往下做**
 
 - [ ] Momentum Breakout 策略實作
-- [ ] Explosion Scanner 策略實作
-- [ ] 回測比較：SMC vs Momentum vs Explosion
-- [ ] 補算所有策略的 CAGR / Sharpe / Sortino
-- [ ] 如果新策略沒有比 SMC 好 → 調參或放棄，不硬做
+- [ ] Explosion Scanner 包成 Strategy（wrapper，0.5 天）
+- [ ] 三個策略各自 Train + Validation 回測
+- [ ] 策略相關性分析（Momentum vs SMC 的報酬相關係數）
+- [ ] OOS (out-of-sample) 驗證
 
-### Phase 3：Ensemble v1
+### Phase 2.5：各策略 OOS 驗證
 
-> 目標：多策略組合是否比單策略好
+> 目標：確認不是過擬合
 
-- [ ] DecisionEngine 實作（vote / weighted / split_account）
-- [ ] 組合回測：SMC + Momentum ensemble vs 各自單獨
-- [ ] 分帳戶模式：核心(SMC) 70% + 搏擊(Momentum+Explosion) 30%
-- [ ] 前端：多策略信號對比頁面
+- [ ] 每個策略在 Test 段跑一次（只看一次！）
+- [ ] 結果與 Validation 方向一致 → 通過
+- [ ] 結果差很多 → 策略有問題，回去 debug
 
-### Phase 4：強化
+### Phase 3：Split Account
 
-- [ ] Regime detection（VIX + MA → trending/ranging/volatile）
-- [ ] 動態權重（近 N 天表現 → 權重調整）
+> 目標：多策略運行，各自獨立
+> 前提：至少 2 個策略通過 OOS 驗證
+
+- [ ] DecisionEngine — split_account 模式
+- [ ] 資金分配：SMC 70% / Momentum 20% / Explosion 10%
+- [ ] 組合回測 vs 各自單獨
+- [ ] 確認組合的 MDD < 各自單獨的 MDD（分散風險）
+
+### Phase 4：Ensemble + 強化
+
+> 前提：Phase 3 證明分帳戶有效
+
+- [ ] Regime detection（VIX + MA）
+- [ ] Mean Reversion 策略（需要 regime）
+- [ ] 動態權重（近 30 天表現 → 權重調整）
+- [ ] 投票/加權模式
 - [ ] 策略相關性控制
-- [ ] 更多策略（Mean Reversion, Sentiment）
 
 ---
 
-## 十、技術決策記錄
+## 十六、技術決策記錄
 
 | 決策 | 選擇 | 原因 |
 |------|------|------|
-| Signal 是 Opinion 不是 Trade | price_hint optional | 情緒策略沒有 entry/stop |
-| 策略透過 DataProvider 取數據 | 不直接碰 DB | 回測可 mock、防 lookahead |
+| Signal = Opinion | price_hint optional, 加 signal_id/side/timeframe | 追蹤信號生命週期、支援多時間框架 |
+| 新增 Decision 層 | Signal[] → Decision[] → Order[] | 多信號匯總成單一行動，分離意見與執行 |
+| 固定風險 sizing | risk_per_trade / (entry - stop) | 比固定比例更合理，不同策略風險一致 |
+| 策略透過 DataProvider | 不直接碰 DB | 回測可 mock、防 lookahead |
 | T+1 open 成交 | 不用 T close | 防 lookahead bias |
-| 先做 2-3 個策略就好 | 不貪多 | 先證明 alpha 存在再擴展 |
-| 數據擴充按 tier | OHLCV → VIX → 社群 → Options | 先用最少數據支撐最多策略 |
-| 分帳戶模式優先 | 不急著做 ensemble | 各策略先獨立證明自己有效 |
-| 先賺錢再說 | 不過度工程化 | 目標是自己交易賺錢，不是做產品 |
+| 出場邏輯留在策略內 | Phase 2 後再看是否抽象 | 不為假設需求過度工程化 |
+| Explosion 保持 Phase 2 | 不降到 Phase 4 | 掃描器已完成，wrapper 工作量極低 |
+| 分帳戶先於 Ensemble | Phase 3 | 最容易落地、最容易診斷、不會混掉 edge |
+| Train/Valid/Test 三段 | 寫進鐵律 | 防過擬合，這是回測可信度的底線 |
+| Phase 1 拆 A/B | A=最小引擎 B=風控 | 避免兩週沒結果，快速看到 SMC 在新引擎跑 |
 
 ---
 
-## 十一、已知風險 & 待解決
+## 十七、已知風險
 
-| 風險 | 嚴重度 | 狀態 |
+| 風險 | 嚴重度 | 對策 |
 |------|--------|------|
-| 現有 SMC 回測缺 CAGR/Sharpe | 中 | 待補算 |
-| Lookahead bias 在舊回測中可能存在 | 高 | Phase 1 重建引擎時修復 |
-| 策略過擬合（參數調太多） | 高 | 需要 out-of-sample 測試 |
-| 外部數據源穩定性（yfinance 限流） | 中 | 考慮 polygon.io 或 alpha vantage 備援 |
-| 爆擊策略勝率極低，心理壓力大 | 中 | 分帳戶 + 嚴格停損 |
+| 現有 SMC 回測缺 CAGR/Sharpe | 中 | Phase 1A 補算 |
+| 舊回測可能有 lookahead bias | 高 | Phase 1A 新引擎修復，對比結果 |
+| 策略過擬合 | 高 | Train/Valid/Test 三段切分 + OOS 驗證 |
+| 新策略沒有 alpha | 中 | Phase 2 關卡：Sharpe < 0.5 就不往下 |
+| 外部數據源不穩定 | 中 | 考慮 polygon.io 備援 |
+| 爆擊策略勝率極低 | 中 | 分帳戶 + 嚴格停損 + 最多 10% 資金 |
+| 做太多工程、忘記目標 | 中 | 每個 phase 問：這會不會更快證明哪個策略能賺錢？ |
 
 ---
 
-## 十二、Review 要求
+## 十八、Review 歷史
 
-這份文件需要外部 Review，重點確認：
+### v1 Review（2026-04-10，GPT-4）
 
-1. **Signal 設計** 是否完整（有沒有漏掉什麼必要欄位）
-2. **DataProvider** 是否夠用（回測 mock 的可行性）
-3. **Execution 流程** T+1 是否正確，有沒有其他 bias 風險
-4. **策略優先順序** 是否合理
-5. **分帳戶 vs Ensemble** 哪個先做比較好
-6. **Phase 1 的範圍** 會不會太大或太小
+評分：7.8 / 10
+
+採納的修正：
+1. Signal 補 signal_id / side / timeframe ✅
+2. Decision 獨立結構 ✅
+3. Position sizing 固定風險模型 ✅
+4. Train/Valid/Test 三段切分 ✅
+5. 三層回測報表 ✅
+6. 分帳戶先於 Ensemble ✅
+7. Phase 1 拆 A/B ✅
+8. DataProvider 補 get_universe / is_tradable ✅
+
+挑戰 GPT 的地方：
+1. **Exit Policy 抽象化** — 延後到 Phase 4，不在 Phase 1 做。出場邏輯是策略 edge 的核心，過早抽象化違反「先賺錢再說」。
+2. **Explosion Scanner 優先順序** — 維持 Phase 2。掃描器已完成，包成 Strategy 只需 wrapper。Mean Reversion 需要 regime detection，放 Phase 4 更合理。
+
+### v2 待 Review
+
+重點確認：
+1. Decision 結構是否完整
+2. SizingModel 固定風險模型的公式是否正確
+3. Execution 四條鐵律有沒有漏洞
+4. Phase 1A/1B 的切分是否合理
+5. 資料切分規範是否夠嚴格
+6. 三層報表的 metrics 有沒有漏
