@@ -66,7 +66,7 @@ async def main():
         gap_threshold_pct=5.0,
     )
 
-    kill_switch = KillSwitch(enabled=True)
+    kill_switch = KillSwitch(enabled=True, max_daily_loss_pct=8.0)  # 5% too sensitive for portfolio-level
 
     engine = BacktestEngine(
         strategies=[strategy],

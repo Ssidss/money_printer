@@ -107,6 +107,7 @@ class Order:
     order_id: str
     ticker: str
     side: str = "long"
+    action: str = "open"                # "open" | "close" — 明確標記意圖
     order_type: str = "market"          # v1 只做 market
     requested_shares: int = 0
     status: str = "pending"             # "pending" | "filled" | "cancelled"

@@ -69,11 +69,12 @@ class BacktestEngine:
                 break
             day_count += 1
 
-            # ── Step 1: 執行昨天的 pending orders（T+1 fill）──
-            self._execute_pending_orders(current)
-
-            # ── Step 2: 更新持倉 mark-to-market + 檢查出場 ──
+            # ── Step 1: 檢查持倉出場（保守路徑 open→low→high→close）──
+            # 必須在 pending orders 之前！先出場釋放資金，再進場
             self._process_exits(current)
+
+            # ── Step 2: 執行昨天的 pending orders（T+1 open fill）──
+            self._execute_pending_orders(current)
 
             # ── Step 3: 更新持倉 valuation（用 close price）──
             self._mark_to_market(current)
@@ -121,9 +122,9 @@ class BacktestEngine:
         if not self._pending_orders:
             return
 
-        # 排序：close orders 先，open orders 按 confidence 降序
-        close_orders = [o for o in self._pending_orders if o.order_type == "market" and self.portfolio.get_position(o.ticker)]
-        open_orders = [o for o in self._pending_orders if o not in close_orders]
+        # 鐵律 4: close orders 先（釋放資金），open orders 按 confidence 降序
+        close_orders = [o for o in self._pending_orders if o.action == "close"]
+        open_orders = [o for o in self._pending_orders if o.action == "open"]
 
         for order in close_orders + open_orders:
             self._try_fill_order(order, current_date)
@@ -142,7 +143,7 @@ class BacktestEngine:
 
         # 如果是平倉 order — 不需要 gap check，直接 fill
         existing_pos = self.portfolio.get_position(order.ticker)
-        if existing_pos and order.entry_price is None:
+        if order.action == "close" and existing_pos:
             # close order: fill at open
             fill_price = self.execution.apply_slippage(open_price, direction="sell")
             slippage = self.execution.slippage_cost(open_price, order.requested_shares)
