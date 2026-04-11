@@ -30,7 +30,8 @@ class Signal:
     timestamp: date             # 信號產生日期
     expiry: date                # 信號過期日期
 
-    # 選填
+    # 選填 — position_tier 從 price_hint 提出來方便追蹤
+    position_tier: str = "標準"   # "核心" | "標準" | "探索"
     price_hint: Optional[dict] = None
     # {
     #     "entry": float,
@@ -83,6 +84,7 @@ class Decision:
     size_shares: Optional[int] = None  # Execution 填入
     strategy_name: str = ""
     capital_pool: str = "default"
+    position_tier: str = "標準"
     reason: str = ""
     linked_signal_ids: list[str] = field(default_factory=list)
     priority: int = 0           # close > open；同類按 confidence
@@ -121,6 +123,7 @@ class Order:
     stop_price: Optional[float] = None
     target_price: Optional[float] = None
     strategy_name: str = ""
+    position_tier: str = "標準"
 
     # 成交後填入
     fill_price: Optional[float] = None
@@ -160,6 +163,7 @@ class Position:
     strategy_name: str = ""
     linked_signal_id: str = ""
     capital_pool: str = "default"
+    position_tier: str = "標準"   # "核心" | "標準" | "探索"
 
     # 動態更新（每天）
     current_price: float = 0.0
@@ -207,11 +211,6 @@ class Position:
     @property
     def total_cost(self) -> float:
         return self.entry_commission + self.entry_slippage + self.exit_commission + self.exit_slippage
-
-    @property
-    def position_tier(self) -> str:
-        """從 meta 或預設"""
-        return "標準"
 
     @property
     def risk_amount(self) -> float:
@@ -268,6 +267,7 @@ class Position:
             "mae": self.mae,
             "mfe": self.mfe,
             "holding_days": self.holding_days,
+            "position_tier": self.position_tier,
             "confidence": 0.0,  # filled by caller
         }
 

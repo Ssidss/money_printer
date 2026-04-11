@@ -217,6 +217,8 @@ class SMCStrategy(BaseStrategy):
 
         daily_trend = smc_daily.structure.trend.value if hasattr(smc_daily.structure.trend, 'value') else str(smc_daily.structure.trend)
 
+        tier = price_hint.get("position_tier", "標準") if price_hint else "標準"
+
         signal = Signal(
             signal_id=Signal.create_id(),
             ticker=ticker,
@@ -228,6 +230,7 @@ class SMCStrategy(BaseStrategy):
             timeframe="1d",
             timestamp=current,
             expiry=current + timedelta(days=self.signal_expiry_days),
+            position_tier=tier,
             price_hint=price_hint,
             meta={
                 "daily_trend": daily_trend,

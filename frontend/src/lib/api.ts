@@ -228,6 +228,20 @@ export const api = {
     ),
   scannerStatus: () => get<{ running: boolean }>("/api/v1/scanner/status"),
 
+  // ── Backtest v3 (Multi-Strategy Engine) ──
+  backtestV3Run: (body: BacktestV3RunReq) => post<{ message: string; status: string }>("/api/v3/backtest-v3/run", body),
+  backtestV3Status: () => get<BacktestV3Status>("/api/v3/backtest-v3/status"),
+  backtestV3Result: () => get<BacktestV3Report>("/api/v3/backtest-v3/result"),
+  backtestV3Summary: () => get<{ portfolio_summary: BacktestV3Summary; metadata: BacktestV3Metadata }>("/api/v3/backtest-v3/result/summary"),
+  backtestV3Trades: (limit = 50, offset = 0, strategy?: string, tier?: string) => {
+    let url = `/api/v3/backtest-v3/result/trades?limit=${limit}&offset=${offset}`
+    if (strategy) url += `&strategy=${encodeURIComponent(strategy)}`
+    if (tier) url += `&tier=${encodeURIComponent(tier)}`
+    return get<{ total: number; trades: BacktestV3Trade[] }>(url)
+  },
+  backtestV3Equity: () => get<BacktestV3EquityPoint[]>("/api/v3/backtest-v3/result/equity"),
+  backtestV3Splits: () => get<BacktestV3Split[]>("/api/v3/backtest-v3/splits"),
+
   // AI Notes
   aiNotes: (ticker?: string, limit = 20) =>
     get<AiNote[]>(`/api/v1/ai-notes${ticker ? `?ticker=${encodeURIComponent(ticker)}&limit=${limit}` : `?limit=${limit}`}`),
@@ -681,6 +695,118 @@ export type ScanResponse = {
   total_count: number
   results: ScanResult[]
   message?: string
+}
+
+// ── Backtest V3 Types ────────────────────────────────────────
+export type BacktestV3RunReq = {
+  split?: string
+  start_date?: string
+  end_date?: string
+  initial_capital?: number
+  min_conditions?: number
+  min_rr?: number
+  max_positions?: number
+  risk_per_trade_pct?: number
+  max_daily_loss_pct?: number
+  market_filter?: string
+  strategies?: string[]
+}
+export type BacktestV3Status = {
+  running: boolean
+  has_result: boolean
+  error: string | null
+}
+export type BacktestV3Summary = {
+  total_return_pct: number
+  cagr_pct: number
+  max_drawdown_pct: number
+  sharpe_ratio: number
+  sortino_ratio: number
+  calmar_ratio: number
+  profit_factor: number
+  win_rate_pct: number
+  total_trades: number
+  avg_holding_days: number
+  expectancy: number
+  avg_exposure_pct: number
+  max_consecutive_losses: number
+  tail_risk_cvar_5pct: number
+  avg_win_pct: number
+  avg_loss_pct: number
+  trading_days: number
+  final_equity: number
+  initial_capital: number
+}
+export type BacktestV3Metadata = {
+  split: string
+  start_date: string
+  end_date: string
+  initial_capital: number
+  min_conditions: number
+  min_rr: number
+  max_positions: number
+  risk_per_trade_pct: number
+  duration_seconds: number
+  stock_count: number
+  trading_days: number
+}
+export type BacktestV3Trade = {
+  position_id: string
+  ticker: string
+  side: string
+  strategy_name: string
+  capital_pool: string
+  entry_date: string
+  entry_price: number
+  exit_date: string | null
+  exit_price: number | null
+  exit_reason: string | null
+  size: number
+  gross_pnl: number | null
+  commission: number
+  slippage_cost: number
+  net_pnl: number | null
+  pnl_pct: number | null
+  mae: number
+  mfe: number
+  holding_days: number
+  position_tier: string
+  confidence: number
+}
+export type BacktestV3EquityPoint = {
+  date: string
+  equity: number
+  drawdown_pct: number
+  cash: number
+  positions_value: number
+  open_positions: number
+}
+export type BacktestV3TierBreakdown = {
+  total_trades: number
+  win_rate_pct: number
+  profit_factor: number
+  avg_pnl_pct: number
+  total_pnl: number
+  avg_holding_days: number
+}
+export type BacktestV3Report = {
+  portfolio_summary: BacktestV3Summary
+  strategy_breakdown: {
+    by_strategy: Record<string, { total_trades: number; win_rate_pct: number; profit_factor: number; avg_pnl_pct: number }>
+    by_exit_reason: Record<string, { count: number; avg_pnl_pct: number; total_pnl: number }>
+    by_tier: Record<string, BacktestV3TierBreakdown>
+  }
+  trade_log: BacktestV3Trade[]
+  equity_curve: BacktestV3EquityPoint[]
+  order_stats: { total: number; filled: number; cancelled: number; cancel_reasons: Record<string, number> }
+  kill_switch: { triggered: boolean; reason: string | null; date: string | null }
+  open_positions: { ticker: string; strategy_name: string; entry_date: string; entry_price: number; current_price: number; unrealized_pnl_pct: number; size: number; holding_days: number }[]
+  metadata: BacktestV3Metadata
+}
+export type BacktestV3Split = {
+  name: string
+  start_date: string
+  end_date: string
 }
 
 export const SSE_URL = `${BASE}/sse/progress`

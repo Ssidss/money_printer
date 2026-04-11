@@ -217,6 +217,7 @@ class BacktestEngine:
             strategy_name=order.strategy_name,
             linked_signal_id=order.linked_signal_ids[0] if order.linked_signal_ids else "",
             capital_pool=order.capital_pool,
+            position_tier=order.position_tier,
             entry_commission=commission,
             entry_slippage=slippage,
         )
@@ -356,6 +357,7 @@ class BacktestEngine:
                 side=s.side,
                 strategy_name=s.strategy_name,
                 capital_pool="default",
+                position_tier=s.position_tier,
                 reason=f"{s.strategy_name} buy signal, confidence={s.confidence:.2f}",
                 linked_signal_ids=[s.signal_id],
                 confidence=s.confidence,
@@ -388,6 +390,7 @@ class BacktestEngine:
                 stop_price=d.stop_price,
                 target_price=d.target_price,
                 strategy_name=d.strategy_name,
+                position_tier=d.position_tier,
             )
             orders.append(order)
         return orders

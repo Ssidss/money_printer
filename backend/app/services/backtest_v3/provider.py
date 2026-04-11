@@ -66,6 +66,22 @@ class DataProvider(ABC):
         ...
 
 
+# ── Data Split Presets ──────────────────────────────────────────
+
+DATA_SPLITS = {
+    "train":      (date(2018, 1, 1), date(2022, 12, 31)),
+    "validation": (date(2023, 1, 1), date(2024, 12, 31)),
+    "test":       (date(2025, 1, 1), date(2026, 12, 31)),
+}
+
+
+def get_split_dates(split: str) -> tuple[date, date]:
+    """回傳 (start_date, end_date) for a named split."""
+    if split in DATA_SPLITS:
+        return DATA_SPLITS[split]
+    raise ValueError(f"Unknown split '{split}'. Valid: {list(DATA_SPLITS.keys())}")
+
+
 class HistoricalProvider(DataProvider):
     """
     回測用 Provider — 從預載的 price_data dict 取數據。
