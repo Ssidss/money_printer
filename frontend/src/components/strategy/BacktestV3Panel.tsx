@@ -5,7 +5,7 @@ import { api, SSE_URL } from "@/lib/api"
 import type {
   BacktestV3RunReq, BacktestV3Status, BacktestV3Report,
   BacktestV3Summary, BacktestV3Metadata, BacktestV3Split,
-  BacktestV3TierBreakdown,
+  BacktestV3TierBreakdown, BacktestV3Trade,
 } from "@/lib/api"
 import { useStrategy } from "@/contexts/StrategyContext"
 
@@ -373,9 +373,297 @@ export function BacktestV3Panel() {
               </div>
             </div>
           )}
+
+          {/* Trade Log with expandable details */}
+          {report && report.trade_log.length > 0 && (
+            <TradeLog trades={report.trade_log} />
+          )}
         </>
       )}
     </div>
+  )
+}
+
+// ── Trade Log ──────────────────────────────────────────
+function TradeLog({ trades }: { trades: BacktestV3Trade[] }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [filter, setFilter] = useState<{ strategy: string; result: string }>({
+    strategy: "all",
+    result: "all",
+  })
+  const [sortBy, setSortBy] = useState<"date" | "pnl" | "holding">("date")
+  const [sortAsc, setSortAsc] = useState(false)
+  const [showCount, setShowCount] = useState(20)
+
+  const toggle = (id: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Get unique strategies for filter
+  const strategies = Array.from(new Set(trades.map(t => t.strategy_name)))
+
+  // Filter
+  let filtered = trades
+  if (filter.strategy !== "all") filtered = filtered.filter(t => t.strategy_name === filter.strategy)
+  if (filter.result === "win") filtered = filtered.filter(t => (t.net_pnl ?? 0) > 0)
+  if (filter.result === "loss") filtered = filtered.filter(t => (t.net_pnl ?? 0) <= 0)
+
+  // Sort
+  filtered = [...filtered].sort((a, b) => {
+    let cmp = 0
+    if (sortBy === "date") cmp = a.entry_date.localeCompare(b.entry_date)
+    else if (sortBy === "pnl") cmp = (a.pnl_pct ?? 0) - (b.pnl_pct ?? 0)
+    else if (sortBy === "holding") cmp = a.holding_days - b.holding_days
+    return sortAsc ? cmp : -cmp
+  })
+
+  const visible = filtered.slice(0, showCount)
+
+  function handleSort(col: "date" | "pnl" | "holding") {
+    if (sortBy === col) setSortAsc(!sortAsc)
+    else { setSortBy(col); setSortAsc(false) }
+  }
+
+  const sortIcon = (col: string) =>
+    sortBy === col ? (sortAsc ? " ↑" : " ↓") : ""
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-semibold text-slate-700">
+          Trade Log <span className="text-slate-400 font-normal">({filtered.length} trades)</span>
+        </h4>
+        <div className="flex items-center gap-2">
+          <select
+            value={filter.strategy}
+            onChange={e => setFilter(prev => ({ ...prev, strategy: e.target.value }))}
+            className="rounded border border-slate-200 px-2 py-1 text-xs"
+          >
+            <option value="all">All Strategies</option>
+            {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select
+            value={filter.result}
+            onChange={e => setFilter(prev => ({ ...prev, result: e.target.value }))}
+            className="rounded border border-slate-200 px-2 py-1 text-xs"
+          >
+            <option value="all">All Results</option>
+            <option value="win">Wins</option>
+            <option value="loss">Losses</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Table header */}
+      <div className="grid grid-cols-[1fr_80px_80px_80px_70px_80px_70px_32px] gap-1 text-[10px] font-medium text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-1.5 mb-1">
+        <div>Ticker</div>
+        <div className="cursor-pointer hover:text-slate-600" onClick={() => handleSort("date")}>
+          Entry{sortIcon("date")}
+        </div>
+        <div>Exit</div>
+        <div>Strategy</div>
+        <div>Tier</div>
+        <div className="cursor-pointer hover:text-slate-600 text-right" onClick={() => handleSort("pnl")}>
+          P&L{sortIcon("pnl")}
+        </div>
+        <div className="cursor-pointer hover:text-slate-600 text-right" onClick={() => handleSort("holding")}>
+          Days{sortIcon("holding")}
+        </div>
+        <div></div>
+      </div>
+
+      {/* Trade rows */}
+      <div className="space-y-0.5">
+        {visible.map(t => (
+          <TradeRow key={t.position_id} trade={t} isOpen={expanded.has(t.position_id)} onToggle={() => toggle(t.position_id)} />
+        ))}
+      </div>
+
+      {/* Show more */}
+      {showCount < filtered.length && (
+        <button
+          onClick={() => setShowCount(prev => prev + 20)}
+          className="mt-3 w-full text-center text-xs text-indigo-600 hover:text-indigo-800 py-1.5"
+        >
+          Show more ({filtered.length - showCount} remaining)
+        </button>
+      )}
+    </div>
+  )
+}
+
+function TradeRow({ trade: t, isOpen, onToggle }: { trade: BacktestV3Trade; isOpen: boolean; onToggle: () => void }) {
+  const pnlColor = (t.net_pnl ?? 0) > 0 ? "text-emerald-600" : (t.net_pnl ?? 0) < 0 ? "text-red-500" : "text-slate-500"
+  const meta = t.signal_meta?.meta ?? {}
+  const ph = t.signal_meta?.price_hint
+
+  const strategyLabel =
+    t.strategy_name === "explosion_scanner" ? "Explosion"
+    : t.strategy_name === "momentum_breakout" ? "Momentum"
+    : t.strategy_name === "smc_v2" ? "SMC"
+    : t.strategy_name
+
+  const tierColor =
+    t.position_tier === "核心" ? "bg-purple-100 text-purple-700"
+    : t.position_tier === "標準" ? "bg-blue-100 text-blue-700"
+    : "bg-slate-100 text-slate-600"
+
+  const exitLabel =
+    t.exit_reason === "stop_loss" ? "止損"
+    : t.exit_reason === "take_profit" ? "止盈"
+    : t.exit_reason === "trailing_stop" ? "追蹤止損"
+    : t.exit_reason === "time_exit" ? "時間到期"
+    : t.exit_reason === "signal_reversal" ? "反轉信號"
+    : t.exit_reason ?? "open"
+
+  return (
+    <div className={`rounded-lg transition-colors ${isOpen ? "bg-slate-50" : "hover:bg-slate-50/50"}`}>
+      {/* Summary row */}
+      <div
+        className="grid grid-cols-[1fr_80px_80px_80px_70px_80px_70px_32px] gap-1 items-center text-xs py-1.5 px-1 cursor-pointer"
+        onClick={onToggle}
+      >
+        <div className="font-semibold text-slate-800">{t.ticker}</div>
+        <div className="text-slate-500">{t.entry_date.slice(5)}</div>
+        <div className="text-slate-500">{t.exit_date?.slice(5) ?? "—"}</div>
+        <div>
+          <span className={`rounded px-1 py-0.5 text-[10px] font-medium ${
+            t.strategy_name === "smc_v2" ? "bg-indigo-100 text-indigo-700"
+            : t.strategy_name === "momentum_breakout" ? "bg-amber-100 text-amber-700"
+            : "bg-cyan-100 text-cyan-700"
+          }`}>
+            {strategyLabel}
+          </span>
+        </div>
+        <div>
+          <span className={`rounded px-1 py-0.5 text-[10px] font-medium ${tierColor}`}>
+            {t.position_tier}
+          </span>
+        </div>
+        <div className={`text-right font-mono font-semibold ${pnlColor}`}>
+          {(t.pnl_pct ?? 0) > 0 ? "+" : ""}{(t.pnl_pct ?? 0).toFixed(2)}%
+        </div>
+        <div className="text-right text-slate-500">{t.holding_days}d</div>
+        <div className="text-center text-slate-400">
+          {isOpen ? "▲" : "▼"}
+        </div>
+      </div>
+
+      {/* Expanded detail */}
+      {isOpen && (
+        <div className="px-2 pb-3 pt-1 border-t border-slate-100">
+          {/* Price grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <DetailCell label="Entry" value={`$${t.entry_price.toFixed(2)}`} />
+            <DetailCell label="Exit" value={t.exit_price ? `$${t.exit_price.toFixed(2)}` : "—"} />
+            <DetailCell label="Stop" value={t.stop_price ? `$${t.stop_price.toFixed(2)}` : ph?.stop ? `$${ph.stop.toFixed(2)}` : "—"} color="text-red-500" />
+            <DetailCell label="Target" value={t.target_price ? `$${t.target_price.toFixed(2)}` : ph?.target ? `$${ph.target.toFixed(2)}` : "—"} color="text-emerald-600" />
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
+            <DetailCell label="Shares" value={`${t.size}`} />
+            <DetailCell label="Net P&L" value={`$${(t.net_pnl ?? 0).toFixed(2)}`} color={pnlColor} />
+            <DetailCell label="R:R" value={ph?.rr_ratio ? ph.rr_ratio.toFixed(2) : "—"} />
+            <DetailCell label="MAE" value={`$${t.mae.toFixed(2)}`} color="text-red-500" />
+            <DetailCell label="MFE" value={`$${t.mfe.toFixed(2)}`} color="text-emerald-600" />
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <DetailCell label="Exit Reason" value={exitLabel} />
+            <DetailCell label="Confidence" value={`${((t.signal_meta?.confidence ?? t.confidence) * 100).toFixed(0)}%`} />
+            <DetailCell label="Costs" value={`$${(t.commission + t.slippage_cost).toFixed(2)}`} />
+            <DetailCell label="Signal Date" value={t.signal_meta?.timestamp?.slice(5) ?? "—"} />
+          </div>
+
+          {/* Strategy-specific explanation */}
+          {Object.keys(meta).length > 0 && (
+            <div className="mt-2 pt-2 border-t border-slate-100">
+              <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-1.5">
+                Signal Explanation
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {/* SMC-specific */}
+                {t.strategy_name === "smc_v2" && (
+                  <>
+                    {meta.daily_trend && <MetaBadge label="Trend" value={String(meta.daily_trend)} />}
+                    {meta.conditions_met != null && <MetaBadge label="Conditions" value={`${meta.conditions_met}/4`} />}
+                    {meta.recommendation && <MetaBadge label="Rec" value={String(meta.recommendation)} />}
+                    {meta.entry_source && <MetaBadge label="Entry Source" value={String(meta.entry_source)} />}
+                    {meta.stop_source && <MetaBadge label="Stop Source" value={String(meta.stop_source)} />}
+                    {meta.target_source && <MetaBadge label="Target Source" value={String(meta.target_source)} />}
+                    {meta.conditions_detail && (
+                      <div className="w-full mt-1 text-[10px] text-slate-500">
+                        {Array.isArray(meta.conditions_detail) ? (
+                          meta.conditions_detail.map((c: string, i: number) => (
+                            <span key={i} className="inline-block mr-2 mb-0.5">
+                              <span className="text-emerald-500">✓</span> {c}
+                            </span>
+                          ))
+                        ) : typeof meta.conditions_detail === "string" ? (
+                          <span>{meta.conditions_detail}</span>
+                        ) : null}
+                      </div>
+                    )}
+                  </>
+                )}
+                {/* Momentum Breakout */}
+                {t.strategy_name === "momentum_breakout" && (
+                  <>
+                    {meta.breakout_pct != null && <MetaBadge label="Breakout" value={`+${Number(meta.breakout_pct).toFixed(1)}%`} />}
+                    {meta.n_day_high != null && <MetaBadge label="N-Day High" value={`$${Number(meta.n_day_high).toFixed(2)}`} />}
+                    {meta.volume_ratio != null && <MetaBadge label="Vol Ratio" value={`${Number(meta.volume_ratio).toFixed(1)}x`} />}
+                    {meta.rsi_14 != null && <MetaBadge label="RSI(14)" value={Number(meta.rsi_14).toFixed(1)} />}
+                    {meta.atr_14 != null && <MetaBadge label="ATR(14)" value={`$${Number(meta.atr_14).toFixed(2)}`} />}
+                  </>
+                )}
+                {/* Explosion Scanner */}
+                {t.strategy_name === "explosion_scanner" && (
+                  <>
+                    {meta.explosion_score != null && <MetaBadge label="Score" value={String(meta.explosion_score)} />}
+                    {meta.change_pct != null && <MetaBadge label="Change" value={`${Number(meta.change_pct) > 0 ? "+" : ""}${Number(meta.change_pct).toFixed(1)}%`} />}
+                    {meta.volume_ratio != null && <MetaBadge label="Vol Ratio" value={`${Number(meta.volume_ratio).toFixed(1)}x`} />}
+                    {meta.consecutive_up_days != null && <MetaBadge label="Up Days" value={`${meta.consecutive_up_days}d`} />}
+                    {meta.is_52w_high && <MetaBadge label="52W High" value="✓" highlight />}
+                    {meta.is_20d_high && <MetaBadge label="20D High" value="✓" highlight />}
+                    {meta.vol_acceleration != null && <MetaBadge label="Vol Accel" value={`${Number(meta.vol_acceleration).toFixed(1)}x`} />}
+                  </>
+                )}
+                {/* Fallback: show raw meta for unknown strategies */}
+                {!["smc_v2", "momentum_breakout", "explosion_scanner"].includes(t.strategy_name) && (
+                  Object.entries(meta).map(([k, v]) => (
+                    <MetaBadge key={k} label={k} value={String(v)} />
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DetailCell({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div>
+      <div className="text-[10px] text-slate-400">{label}</div>
+      <div className={`text-xs font-semibold ${color ?? "text-slate-800"}`}>{value}</div>
+    </div>
+  )
+}
+
+function MetaBadge({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] ${
+      highlight ? "bg-emerald-100 text-emerald-700 font-medium" : "bg-slate-100 text-slate-600"
+    }`}>
+      {label}: <span className="font-medium">{value}</span>
+    </span>
   )
 }
 

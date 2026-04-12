@@ -269,6 +269,10 @@ class Position:
             "holding_days": self.holding_days,
             "position_tier": self.position_tier,
             "confidence": 0.0,  # filled by caller
+            "linked_signal_id": self.linked_signal_id,
+            "stop_price": self.stop_price,
+            "target_price": self.target_price,
+            "signal_meta": {},  # filled by engine._build_result
         }
 
 

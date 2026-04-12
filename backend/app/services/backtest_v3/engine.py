@@ -57,6 +57,8 @@ class BacktestEngine:
         self._pending_orders: list[Order] = []
         # 當天產生的 signals（debug 用）
         self._all_signals: list[Signal] = []
+        # Signal meta 快照（signal_id → meta + price_hint）— for trade detail
+        self._signal_meta_map: dict[str, dict] = {}
 
     async def run(self, progress_cb: ProgressCb = None) -> dict:
         """主回測循環"""
@@ -331,6 +333,21 @@ class BacktestEngine:
                     logger.error(f"Strategy {strategy.strategy_name} error on {ticker}: {e}")
 
         self._all_signals.extend(all_signals)
+
+        # 快照 signal meta — trade detail 用
+        for s in all_signals:
+            if s.action == "buy" and s.has_entry():
+                self._signal_meta_map[s.signal_id] = {
+                    "strategy_name": s.strategy_name,
+                    "strategy_type": s.strategy_type,
+                    "confidence": s.confidence,
+                    "position_tier": s.position_tier,
+                    "price_hint": s.price_hint,
+                    "meta": s.meta,
+                    "timestamp": str(s.timestamp),
+                    "expiry": str(s.expiry),
+                }
+
         return all_signals
 
     def _signals_to_decisions(self, signals: list[Signal], current_date: date) -> list[Decision]:
@@ -400,6 +417,12 @@ class BacktestEngine:
     def _build_result(self) -> dict:
         """回測結果 — 三層報表的原始數據"""
         trades = [p.to_trade_record() for p in self.portfolio.closed_trades]
+
+        # 附加 signal meta 到每筆 trade
+        for t in trades:
+            sig_id = t.get("linked_signal_id", "")
+            if sig_id and sig_id in self._signal_meta_map:
+                t["signal_meta"] = self._signal_meta_map[sig_id]
 
         # 未平倉也記錄（但標記 open）
         open_positions = [{

@@ -780,6 +780,24 @@ export type BacktestV3Trade = {
   holding_days: number
   position_tier: string
   confidence: number
+  linked_signal_id?: string
+  stop_price?: number | null
+  target_price?: number | null
+  signal_meta?: {
+    strategy_name: string
+    strategy_type: string
+    confidence: number
+    position_tier: string
+    price_hint?: {
+      entry: number
+      stop: number
+      target: number
+      rr_ratio: number
+    }
+    meta: Record<string, unknown>
+    timestamp: string
+    expiry: string
+  }
 }
 export type BacktestV3EquityPoint = {
   date: string
