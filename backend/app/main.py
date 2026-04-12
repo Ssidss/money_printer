@@ -18,7 +18,7 @@ from .database import engine, AsyncSessionLocal, Base
 from .models import (
     User,
     Stock, PriceHistory, AnalysisResult, NewsArticle,
-    PortfolioTransaction, PortfolioHolding, BacktestResult,
+    PortfolioTransaction, PortfolioHolding, BacktestResult, BacktestResultV3,
     AiAnalysisNote,
     StrategyProfile, BacktestResultV2, BacktestTrade, BacktestEquity, StrategySignal,
 )

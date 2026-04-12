@@ -2,6 +2,7 @@ import { api } from "@/lib/api"
 import type { StrategyListItem } from "@/lib/api"
 import { StrategyList } from "@/components/strategy/StrategyList"
 import { BacktestV3Panel } from "@/components/strategy/BacktestV3Panel"
+import { BacktestHistory } from "@/components/strategy/BacktestHistory"
 
 export const revalidate = 0
 
@@ -19,6 +20,17 @@ export default async function StrategiesPage() {
           </p>
         </div>
         <BacktestV3Panel />
+      </section>
+
+      {/* V3 Backtest History + Comparison */}
+      <section>
+        <div className="mb-4">
+          <h2 className="text-xl font-bold text-slate-800">回測歷史</h2>
+          <p className="text-slate-500 text-sm mt-1">
+            歷次回測記錄 · 勾選兩筆可比較策略績效差異
+          </p>
+        </div>
+        <BacktestHistory />
       </section>
 
       {/* V2 Strategy Profiles */}

@@ -242,6 +242,16 @@ export const api = {
   backtestV3Equity: () => get<BacktestV3EquityPoint[]>("/api/v3/backtest-v3/result/equity"),
   backtestV3Splits: () => get<BacktestV3Split[]>("/api/v3/backtest-v3/splits"),
 
+  // Backtest V3 History (Phase E)
+  backtestV3History: (limit = 20, offset = 0, strategy?: string) => {
+    let url = `/api/v3/backtest-v3/history?limit=${limit}&offset=${offset}`
+    if (strategy) url += `&strategy=${encodeURIComponent(strategy)}`
+    return get<BacktestV3HistoryResponse>(url)
+  },
+  backtestV3HistoryDetail: (id: number) => get<BacktestV3Report>(`/api/v3/backtest-v3/history/${id}`),
+  backtestV3HistoryDelete: (id: number) => del(`/api/v3/backtest-v3/history/${id}`),
+  backtestV3Compare: (a: number, b: number) => get<BacktestV3CompareResponse>(`/api/v3/backtest-v3/compare?a=${a}&b=${b}`),
+
   // Live Signals
   liveSignals: (ticker: string, strategies = "explosion_scanner,momentum_breakout") =>
     get<LiveSignalResponse>(`/api/v3/signals/${encodeURIComponent(ticker)}?strategies=${encodeURIComponent(strategies)}`),
@@ -716,6 +726,7 @@ export type BacktestV3RunReq = {
   max_daily_loss_pct?: number
   market_filter?: string
   strategies?: string[]
+  save_name?: string
 }
 export type BacktestV3Status = {
   running: boolean
@@ -833,6 +844,65 @@ export type BacktestV3Split = {
   name: string
   start_date: string
   end_date: string
+}
+
+// ── Backtest V3 History Types (Phase E) ───────────────────
+export type BacktestV3HistoryItem = {
+  id: number
+  name: string | null
+  split: string
+  start_date: string
+  end_date: string
+  strategies: string[]
+  total_return_pct: number | null
+  cagr_pct: number | null
+  max_drawdown_pct: number | null
+  sharpe_ratio: number | null
+  win_rate_pct: number | null
+  profit_factor: number | null
+  total_trades: number | null
+  params: Record<string, unknown>
+  duration_seconds: number | null
+  stock_count: number | null
+  trading_days: number | null
+  created_at: string | null
+}
+export type BacktestV3HistoryResponse = {
+  total: number
+  items: BacktestV3HistoryItem[]
+}
+export type BacktestV3CompareMetrics = {
+  total_return_pct: number | null
+  cagr_pct: number | null
+  max_drawdown_pct: number | null
+  sharpe_ratio: number | null
+  sortino_ratio: number | null
+  win_rate_pct: number | null
+  profit_factor: number | null
+  total_trades: number | null
+  avg_holding_days: number | null
+  expectancy: number | null
+  avg_win_pct: number | null
+  avg_loss_pct: number | null
+  tail_risk_cvar_5pct: number | null
+  avg_exposure_pct: number | null
+}
+export type BacktestV3CompareSide = {
+  id: number
+  name: string | null
+  split: string
+  start_date: string
+  end_date: string
+  strategies: string[]
+  params: Record<string, unknown>
+  created_at: string | null
+  metrics: BacktestV3CompareMetrics
+  strategy_breakdown: Record<string, unknown>
+}
+export type BacktestV3CompareResponse = {
+  a: BacktestV3CompareSide
+  b: BacktestV3CompareSide
+  params_diff: Record<string, { a: unknown; b: unknown }>
 }
 
 // ── Live Signal Types ─────────────────────────────────────
