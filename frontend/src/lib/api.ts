@@ -115,8 +115,8 @@ export const api = {
     get<NewsItem[]>(`/api/v1/stocks/${ticker}/news`),
   stockFetch: (ticker: string, days = 7) =>
     post<{ message: string; rows_added: number }>(`/api/v1/stocks/${ticker}/fetch?days=${days}`, {}),
-  batchFetch: (days = 7) =>
-    post<{ message: string }>(`/api/v1/stocks/batch-fetch?days=${days}`, {}),
+  batchFetch: (days = 7, backfill = false) =>
+    post<{ message: string }>(`/api/v1/stocks/batch-fetch?days=${days}&backfill=${backfill}`, {}),
   stockAnalyze: (ticker: string) =>
     post<{ message: string }>(`/api/v1/stocks/${ticker}/analyze`, {}),
   stockAnalyzeSync: (ticker: string) =>

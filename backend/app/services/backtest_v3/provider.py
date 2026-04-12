@@ -69,9 +69,10 @@ class DataProvider(ABC):
 # ── Data Split Presets ──────────────────────────────────────────
 
 DATA_SPLITS = {
-    "train":      (date(2018, 1, 1), date(2022, 12, 31)),
+    "train":      (date(2020, 1, 1), date(2022, 12, 31)),
     "validation": (date(2023, 1, 1), date(2024, 12, 31)),
     "test":       (date(2025, 1, 1), date(2026, 12, 31)),
+    "full":       (date(2020, 1, 1), date(2026, 12, 31)),
 }
 
 

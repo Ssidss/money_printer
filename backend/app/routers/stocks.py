@@ -332,11 +332,18 @@ async def get_smc(
 @router.post("/batch-fetch")
 async def batch_fetch_stocks(
     days: int = 7,
+    backfill: bool = False,
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
-    """批次更新所有追蹤股票的股價（背景執行）"""
-    background_tasks.add_task(_run_batch_fetch, days)
-    return {"message": f"批次股價更新已啟動（回補 {days} 天）"}
+    """批次更新所有追蹤股票的股價（背景執行）
+
+    - days: 向前回補的天數（預設 7）
+    - backfill: 若 True，強制回補至 2020-01-01（約 2300 天）
+    """
+    actual_days = 2300 if backfill else days
+    background_tasks.add_task(_run_batch_fetch, actual_days)
+    label = "回補至 2020" if backfill else f"回補 {days} 天"
+    return {"message": f"批次股價更新已啟動（{label}）"}
 
 
 async def _run_batch_fetch(days: int):
