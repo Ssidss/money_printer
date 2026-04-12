@@ -169,14 +169,15 @@ async def fetch_and_store_prices(
     # 決定起始日期（往後補新資料）
     if latest_date:
         start_date = latest_date + timedelta(days=1)
-        if start_date >= date.today():
+        if start_date > date.today():
             logger.debug(f"{ticker} 資料已是最新，跳過")
             return 0
         start_str = start_date.strftime("%Y-%m-%d")
     else:
         start_str = desired_start.strftime("%Y-%m-%d")
 
-    end_str = date.today().strftime("%Y-%m-%d")
+    # yfinance 的 end 是 exclusive（不含尾日），所以 +1 天才能抓到今天的數據
+    end_str = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
 
     if progress_cb:
         await progress_cb(f"正在抓取 {ticker} 股價 ({start_str} ~ {end_str})...")
