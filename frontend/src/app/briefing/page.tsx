@@ -1,6 +1,7 @@
 import { api } from "@/lib/api"
 import Link from "next/link"
 import type { NextOpenBriefing, BriefingPortfolioItem, BriefingWatchItem } from "@/lib/api"
+import { BriefingSignals } from "@/components/briefing/BriefingSignals"
 
 export const revalidate = 0
 
@@ -145,6 +146,9 @@ export default async function BriefingPage() {
           </div>
         </div>
       )}
+
+      {/* ═══ 策略信號速覽 ═══ */}
+      <BriefingSignals />
 
       {/* ═══ 行動總結 ═══ */}
       <div className="rounded-xl border-2 border-slate-300 bg-gradient-to-r from-slate-50 to-white p-5 shadow-sm">
