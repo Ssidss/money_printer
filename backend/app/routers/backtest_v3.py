@@ -186,6 +186,8 @@ async def _run_v3(req: V3RunRequest):
 
         kill_switch = KillSwitch(
             enabled=True,
+            max_drawdown_pct=50.0,      # 放寬到 50%，避免長期回測被提前終止
+            max_consecutive_losses=20,   # 放寬連虧上限
             max_daily_loss_pct=req.max_daily_loss_pct,
         )
 
