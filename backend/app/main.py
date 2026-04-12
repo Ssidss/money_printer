@@ -23,7 +23,7 @@ from .models import (
     StrategyProfile, BacktestResultV2, BacktestTrade, BacktestEquity, StrategySignal,
 )
 from .routers import stocks, analysis, portfolio, backtest, sse, telegram, ai_notes, briefing, smc_v2
-from .routers import strategies, backtest_v2, backtest_v3, auth, scanner
+from .routers import strategies, backtest_v2, backtest_v3, auth, scanner, signals
 from .services.fetcher import ensure_stock_exists
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,7 @@ app.include_router(backtest_v2.router, prefix="/api/v2")
 
 # ── v3 routes ────────────────────────────────────────────────────────
 app.include_router(backtest_v3.router, prefix="/api/v3")
+app.include_router(signals.router, prefix="/api/v3")
 
 # ── SSE ──────────────────────────────────────────────────────────────
 app.include_router(sse.router)

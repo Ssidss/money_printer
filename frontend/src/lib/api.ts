@@ -242,6 +242,12 @@ export const api = {
   backtestV3Equity: () => get<BacktestV3EquityPoint[]>("/api/v3/backtest-v3/result/equity"),
   backtestV3Splits: () => get<BacktestV3Split[]>("/api/v3/backtest-v3/splits"),
 
+  // Live Signals
+  liveSignals: (ticker: string, strategies = "explosion_scanner,momentum_breakout") =>
+    get<LiveSignalResponse>(`/api/v3/signals/${encodeURIComponent(ticker)}?strategies=${encodeURIComponent(strategies)}`),
+  batchSignals: (strategy = "explosion_scanner", market = "US") =>
+    get<BatchSignalResponse>(`/api/v3/signals/batch/all?strategy=${encodeURIComponent(strategy)}&market=${encodeURIComponent(market)}`),
+
   // AI Notes
   aiNotes: (ticker?: string, limit = 20) =>
     get<AiNote[]>(`/api/v1/ai-notes${ticker ? `?ticker=${encodeURIComponent(ticker)}&limit=${limit}` : `?limit=${limit}`}`),
@@ -809,6 +815,46 @@ export type BacktestV3Split = {
   name: string
   start_date: string
   end_date: string
+}
+
+// ── Live Signal Types ─────────────────────────────────────
+export type LiveSignal = {
+  signal_id: string
+  strategy_name: string
+  strategy_type: string
+  action: string            // "buy" | "sell" | "hold" | "watch"
+  confidence: number
+  position_tier: string     // "核心" | "標準" | "探索"
+  entry: number | null
+  stop: number | null
+  target: number | null
+  rr_ratio: number | null
+  expiry: string
+  meta: Record<string, unknown>
+}
+
+export type LiveSignalResponse = {
+  ticker: string
+  data_date: string
+  current_price: number | null
+  signal_count: number
+  signals: LiveSignal[]
+  strategy_status: Record<string, { status: string; message?: string; signal_count: number }>
+  timing: { data_load_ms: number; compute_ms: number }
+}
+
+export type BatchSignalResult = LiveSignal & {
+  ticker: string
+  current_price: number | null
+}
+
+export type BatchSignalResponse = {
+  strategy: string
+  data_date: string
+  stock_count: number
+  signal_count: number
+  results: BatchSignalResult[]
+  timing: { data_load_ms: number; compute_ms: number }
 }
 
 export const SSE_URL = `${BASE}/sse/progress`

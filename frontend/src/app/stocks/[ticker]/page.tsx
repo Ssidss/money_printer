@@ -4,6 +4,7 @@ import { BackButton } from "@/components/stock/BackButton"
 import { AiNotes } from "@/components/stock/AiNotes"
 import { StockActions } from "@/components/stock/StockActions"
 import { ChartControls } from "@/components/stock/ChartControls"
+import { StrategySignals } from "@/components/stock/StrategySignals"
 import type { SmcData, EntryPlanV2, SmcV2Data } from "@/lib/api"
 
 export const revalidate = 0
@@ -430,6 +431,9 @@ export default async function StockDetailPage({ params }: { params: Promise<{ ti
               </div>
             </div>
           )}
+
+          {/* V3 策略信號 */}
+          <StrategySignals ticker={T} />
 
           {/* AI 分析記錄 */}
           <AiNotes ticker={T} />
