@@ -4,6 +4,7 @@ import { AnalyzeButton } from "@/components/dashboard/AnalyzeButton"
 import { BatchFetchButton } from "@/components/dashboard/BatchFetchButton"
 import { TopPickCard } from "@/components/dashboard/TopPickCard"
 import { HoldingsSection } from "@/components/dashboard/HoldingsSection"
+import { StrategySignalsSummary } from "@/components/dashboard/StrategySignalsSummary"
 import type { TopPick, SmcTrendMTF } from "@/lib/api"
 
 export const revalidate = 60
@@ -128,6 +129,9 @@ export default async function Dashboard() {
 
       {/* 持倉速覽 — client component，需要登入才看得到 */}
       <HoldingsSection priceMap={priceMap} trendsMTF={trendsMTF} />
+
+      {/* 策略信號總覽 — client component，即時載入 batch signals */}
+      <StrategySignalsSummary />
 
       {/* All Tracked Stocks */}
       <div>

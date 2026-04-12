@@ -4,6 +4,7 @@ import { useState, useMemo } from "react"
 import Link from "next/link"
 import type { TopPick, Stock, EntrySuggestion, AiNoteLatest, SmcTrendMTF } from "@/lib/api"
 import { RemoveStockButton } from "./RemoveStockButton"
+import { useBatchSignals, SignalCell } from "@/components/dashboard/BatchSignals"
 
 type MergedStock = Stock & Partial<TopPick>
 
@@ -167,6 +168,7 @@ export function StocksTable({ stocks, trendsMTF, analysisDone, aiNotes = {} }: P
   const [market, setMarket] = useState<Market>("ALL")
   const [sortKey, setSortKey] = useState<SortKey>("composite_score")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
+  const { signalMap, loading: signalsLoading } = useBatchSignals()
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -272,6 +274,9 @@ export function StocksTable({ stocks, trendsMTF, analysisDone, aiNotes = {} }: P
                     推薦 <SortIcon active={sortKey === "recommendation"} dir={sortDir} />
                   </th>
                   <th className="text-center px-4 py-3">建議操作</th>
+                  <th className="text-center px-4 py-3 min-w-[80px]">
+                    <span className="text-cyan-600">策略信號</span>
+                  </th>
                   <th className="text-right px-4 py-3 min-w-[110px]">
                     <span className="text-indigo-500">進出場</span>
                     <div className="text-slate-300 font-normal normal-case">買 / 停 / 目標</div>
@@ -347,6 +352,9 @@ export function StocksTable({ stocks, trendsMTF, analysisDone, aiNotes = {} }: P
                         ) : (
                           <span className="text-xs text-slate-300">—</span>
                         )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <SignalCell ticker={s.ticker} signalMap={signalMap} loading={signalsLoading} />
                       </td>
                       <td className="px-4 py-3">
                         <EntryCell
