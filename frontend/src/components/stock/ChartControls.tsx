@@ -191,7 +191,7 @@ export function ChartControls({
       <StockChart
         bars={bars}
         smc={smc}
-        height={480}
+        height={400}
       />
     </div>
   )
