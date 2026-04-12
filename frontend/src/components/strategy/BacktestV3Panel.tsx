@@ -7,6 +7,7 @@ import type {
   BacktestV3Summary, BacktestV3Metadata, BacktestV3Split,
   BacktestV3TierBreakdown,
 } from "@/lib/api"
+import { useStrategy } from "@/contexts/StrategyContext"
 
 // ── Metric Card ─────────────────────────────────────────
 function Metric({ label, value, color }: { label: string; value: string; color?: string }) {
@@ -23,7 +24,36 @@ function pctColor(v: number) {
 }
 
 // ── Main Panel ──────────────────────────────────────────
+// Sync backtest results to StrategyContext
+function syncMetricsToContext(
+  report: BacktestV3Report,
+  updateFn: (id: string, m: { cagr: number; sharpe: number; mdd: number; trades: number; winRate: number; profitFactor: number }) => void
+) {
+  const s = report.portfolio_summary
+  const byStrategy = report.strategy_breakdown?.by_strategy
+  const strategies = report.metadata?.strategies
+
+  // If single strategy, use portfolio summary
+  if (strategies?.length === 1) {
+    updateFn(strategies[0], {
+      cagr: s.cagr_pct,
+      sharpe: s.sharpe_ratio,
+      mdd: s.max_drawdown_pct,
+      trades: s.total_trades,
+      winRate: s.win_rate_pct,
+      profitFactor: s.profit_factor,
+    })
+    return
+  }
+
+  // Multi-strategy: only sync trades/WR/PF from per-strategy breakdown.
+  // CAGR/Sharpe/MDD are portfolio-level and would be misleading per-strategy.
+  // Don't overwrite existing single-strategy metrics with inaccurate data.
+  // Users should run single-strategy backtests for accurate per-strategy metrics.
+}
+
 export function BacktestV3Panel() {
+  const { updateStrategyMetrics } = useStrategy()
   const [splits, setSplits] = useState<BacktestV3Split[]>([])
   const [status, setStatus] = useState<BacktestV3Status | null>(null)
   const [report, setReport] = useState<BacktestV3Report | null>(null)
@@ -57,7 +87,10 @@ export function BacktestV3Panel() {
     api.backtestV3Status().then(s => {
       setStatus(s)
       if (s.has_result && !s.running) {
-        api.backtestV3Result().then(setReport).catch(() => {})
+        api.backtestV3Result().then(r => {
+          setReport(r)
+          syncMetricsToContext(r, updateStrategyMetrics)
+        }).catch(() => {})
       }
     }).catch(() => {})
   }, [])
@@ -90,7 +123,10 @@ export function BacktestV3Panel() {
           esRef.current = null
           setLoading(false)
           if (data.status === "done") {
-            api.backtestV3Result().then(setReport).catch(() => {})
+            api.backtestV3Result().then(r => {
+              setReport(r)
+              syncMetricsToContext(r, updateStrategyMetrics)
+            }).catch(() => {})
           }
           setProgress(data.message || "")
           setProgressPct(100)

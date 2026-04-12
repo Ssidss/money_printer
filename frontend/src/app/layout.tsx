@@ -3,6 +3,7 @@ import "./globals.css"
 import { Sidebar } from "@/components/layout/Sidebar"
 import { TopBar } from "@/components/layout/TopBar"
 import { Providers } from "@/components/layout/Providers"
+import { StrategyPanel, StrategyToggle } from "@/components/layout/StrategyPanel"
 
 export const metadata: Metadata = {
   title: "Money Printer",
@@ -19,6 +20,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <TopBar />
             <main className="flex-1 p-6 overflow-y-auto">{children}</main>
           </div>
+          <StrategyToggle />
+          <StrategyPanel />
         </Providers>
       </body>
     </html>

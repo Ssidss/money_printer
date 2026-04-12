@@ -746,6 +746,8 @@ export type BacktestV3Metadata = {
   min_rr: number
   max_positions: number
   risk_per_trade_pct: number
+  max_daily_loss_pct: number
+  strategies: string[]
   duration_seconds: number
   stock_count: number
   trading_days: number
