@@ -53,13 +53,19 @@ function syncMetricsToContext(
 }
 
 export function BacktestV3Panel() {
-  const { updateStrategyMetrics } = useStrategy()
+  const { updateStrategyMetrics, activateV3, deactivateV3, v3 } = useStrategy()
   const [splits, setSplits] = useState<BacktestV3Split[]>([])
   const [status, setStatus] = useState<BacktestV3Status | null>(null)
   const [report, setReport] = useState<BacktestV3Report | null>(null)
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState("")
   const [progressPct, setProgressPct] = useState(0)
+
+  // History selector state
+  const [historyItems, setHistoryItems] = useState<{ id: number; label: string; strategies: string[]; params: Record<string, unknown> }[]>([])
+  const [selectedHistoryId, setSelectedHistoryId] = useState<number | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [activating, setActivating] = useState(false)
 
   // Form state
   const [split, setSplit] = useState("validation")
@@ -81,7 +87,7 @@ export function BacktestV3Panel() {
     )
   }
 
-  // Load initial data
+  // Load initial data + history list
   useEffect(() => {
     api.backtestV3Splits().then(setSplits).catch(() => {})
     api.backtestV3Status().then(s => {
@@ -93,7 +99,29 @@ export function BacktestV3Panel() {
         }).catch(() => {})
       }
     }).catch(() => {})
+    // Load history for selector
+    api.backtestV3History(50).then(res => {
+      setHistoryItems(res.items.map(i => ({
+        id: i.id,
+        label: `#${i.id} ${i.name || i.strategies.map(s => s === "smc_v2" ? "SMC" : s === "explosion_scanner" ? "Explosion" : s === "momentum_breakout" ? "Momentum" : s).join("+")} — ${i.split} (${i.total_return_pct != null ? (i.total_return_pct > 0 ? "+" : "") + i.total_return_pct.toFixed(1) + "%" : "—"})`,
+        strategies: i.strategies,
+        params: i.params,
+      })))
+    }).catch(() => {})
   }, [])
+
+  // Load history report when selected
+  async function handleHistorySelect(id: number) {
+    if (id === selectedHistoryId) return
+    setSelectedHistoryId(id)
+    setHistoryLoading(true)
+    try {
+      const r = await api.backtestV3HistoryDetail(id)
+      setReport(r)
+      syncMetricsToContext(r, updateStrategyMetrics)
+    } catch { /* ignore */ }
+    finally { setHistoryLoading(false) }
+  }
 
   // SSE progress listener with cleanup
   const esRef = useRef<EventSource | null>(null)
@@ -125,7 +153,17 @@ export function BacktestV3Panel() {
           if (data.status === "done") {
             api.backtestV3Result().then(r => {
               setReport(r)
+              setSelectedHistoryId(null)
               syncMetricsToContext(r, updateStrategyMetrics)
+            }).catch(() => {})
+            // Refresh history list
+            api.backtestV3History(50).then(res => {
+              setHistoryItems(res.items.map(i => ({
+                id: i.id,
+                label: `#${i.id} ${i.name || i.strategies.map(s => s === "smc_v2" ? "SMC" : s === "explosion_scanner" ? "Explosion" : s === "momentum_breakout" ? "Momentum" : s).join("+")} — ${i.split} (${i.total_return_pct != null ? (i.total_return_pct > 0 ? "+" : "") + i.total_return_pct.toFixed(1) + "%" : "—"})`,
+                strategies: i.strategies,
+                params: i.params,
+              })))
             }).catch(() => {})
           }
           setProgress(data.message || "")
@@ -143,6 +181,36 @@ export function BacktestV3Panel() {
       setLoading(false)
     }
   }, [])
+
+  async function handleActivate() {
+    setActivating(true)
+    try {
+      if (selectedHistoryId) {
+        // Activate from history result
+        await activateV3(selectedHistoryId)
+      } else if (meta) {
+        // Activate from current report's params
+        await activateV3(undefined, {
+          strategies: meta.strategies,
+          min_conditions: meta.min_conditions,
+          min_rr: meta.min_rr,
+          market_filter: "US",
+        })
+      } else {
+        // Activate from form params
+        await activateV3(undefined, {
+          strategies: selectedStrategies.length > 0 ? selectedStrategies : ["smc_v2"],
+          min_conditions: minConditions,
+          min_rr: minRR,
+          market_filter: "US",
+        })
+      }
+    } catch (e) {
+      console.error("Activation failed:", e)
+    } finally {
+      setActivating(false)
+    }
+  }
 
   async function handleRun() {
     setLoading(true)
@@ -237,6 +305,63 @@ export function BacktestV3Panel() {
           </div>
         </div>
 
+        {/* History selector */}
+        {historyItems.length > 0 && (
+          <div className="mb-4 p-3 bg-slate-50 rounded-lg border border-slate-100">
+            <label className="block text-xs text-slate-400 mb-1.5">載入歷史回測結果</label>
+            <div className="flex items-center gap-3">
+              <select
+                value={selectedHistoryId ?? ""}
+                onChange={e => {
+                  const v = e.target.value
+                  if (v) handleHistorySelect(Number(v))
+                }}
+                className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
+              >
+                <option value="">— 選擇歷史結果 ({historyItems.length} 筆) —</option>
+                {historyItems.map(h => (
+                  <option key={h.id} value={h.id}>{h.label}</option>
+                ))}
+              </select>
+              {historyLoading && <span className="text-xs text-slate-400 animate-pulse">載入中...</span>}
+              {selectedHistoryId && !historyLoading && (
+                <button
+                  onClick={() => { setSelectedHistoryId(null); setReport(null) }}
+                  className="text-xs text-slate-400 hover:text-red-500"
+                >
+                  清除
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* V3 Active Status Banner */}
+        {v3.active && (
+          <div className="mb-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-sm font-medium text-emerald-700">
+                V3 配置已啟動
+              </span>
+              {v3.config && (
+                <span className="text-xs text-emerald-600">
+                  {v3.config.strategies.map(s => s === "smc_v2" ? "SMC" : s === "explosion_scanner" ? "Explosion" : s === "momentum_breakout" ? "Momentum" : s).join("+")}
+                  {" | "}min_cond={v3.config.params.min_conditions}, min_rr={v3.config.params.min_rr}
+                  {v3.config.backtest_name && ` | ${v3.config.backtest_name}`}
+                  {" | "}{v3.buyCount} BUY signals
+                </span>
+              )}
+            </div>
+            <button
+              onClick={deactivateV3}
+              className="text-xs text-red-500 hover:text-red-700 font-medium"
+            >
+              停用
+            </button>
+          </div>
+        )}
+
         <div className="flex items-center gap-4">
           <button
             onClick={handleRun}
@@ -244,6 +369,14 @@ export function BacktestV3Panel() {
             className="px-6 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
           >
             {loading ? "回測中..." : "執行 V3 回測"}
+          </button>
+
+          <button
+            onClick={handleActivate}
+            disabled={activating || loading}
+            className="px-5 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+          >
+            {activating ? "啟動中..." : v3.active ? "重新啟動配置" : "啟動此配置"}
           </button>
 
           {loading && (

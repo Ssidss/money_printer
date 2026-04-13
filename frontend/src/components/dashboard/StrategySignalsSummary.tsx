@@ -25,11 +25,18 @@ const TIER_COLOR: Record<string, string> = {
 }
 
 export function StrategySignalsSummary() {
-  const { selectedStrategies } = useStrategy()
+  const { selectedStrategies, v3 } = useStrategy()
   const [signals, setSignals] = useState<BatchSignalResult[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // If V3 is active, use V3 signals directly
+    if (v3.active) {
+      setSignals(v3.signals)
+      setLoading(v3.loading)
+      return
+    }
+
     let cancelled = false
 
     async function load() {
@@ -65,7 +72,7 @@ export function StrategySignalsSummary() {
 
     load()
     return () => { cancelled = true }
-  }, [selectedStrategies])
+  }, [selectedStrategies, v3.active, v3.signals, v3.loading])
 
   // Only show buy signals, sorted by confidence desc
   const buySignals = useMemo(() => {
@@ -99,7 +106,17 @@ export function StrategySignalsSummary() {
           )}
         </h3>
         <span className="text-[10px] text-slate-400">
-          Explosion + Momentum (US+TW 即時)
+          {v3.active ? (
+            <>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                V3 {v3.config?.strategies.map(s => s === "smc_v2" ? "SMC" : s === "explosion_scanner" ? "EXP" : "MOM").join("+")}
+                {v3.dataDate && ` (${v3.dataDate})`}
+              </span>
+            </>
+          ) : (
+            "Explosion + Momentum (US+TW 即時)"
+          )}
         </span>
       </div>
 

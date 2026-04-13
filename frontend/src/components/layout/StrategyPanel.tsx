@@ -3,19 +3,24 @@ import { useStrategy, type StrategyDef } from "@/contexts/StrategyContext"
 
 // ── Floating toggle button (always visible) ─────────────
 export function StrategyToggle() {
-  const { togglePanel, panelOpen, primaryDef: primary } = useStrategy()
+  const { togglePanel, panelOpen, primaryDef: primary, v3 } = useStrategy()
 
   if (panelOpen) return null
 
   return (
     <button
       onClick={togglePanel}
-      className="fixed right-4 top-20 z-40 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-md transition-all hover:border-indigo-200 hover:text-indigo-600"
+      className={`fixed right-4 top-20 z-40 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm shadow-md transition-all ${
+        v3.active
+          ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:border-emerald-400"
+          : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-600"
+      }`}
       title="策略面板"
     >
+      {v3.active && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />}
       <span className="text-base">&#9881;</span>
       <span className="hidden sm:inline max-w-[120px] truncate">
-        {primary?.shortLabel ?? "策略"}
+        {v3.active ? "V3" : primary?.shortLabel ?? "策略"}
       </span>
     </button>
   )
@@ -33,6 +38,8 @@ export function StrategyPanel() {
     selectedStrategies,
     setPrimaryStrategy,
     toggleStrategy,
+    v3,
+    deactivateV3,
   } = useStrategy()
 
   if (!panelOpen) return null
@@ -92,6 +99,39 @@ export function StrategyPanel() {
               : "同時顯示多策略分析"}
           </p>
         </div>
+
+        {/* V3 Active Config Banner */}
+        {v3.active && (
+          <div className="border-b border-slate-100 px-5 py-3">
+            <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-xs font-semibold text-emerald-700">V3 配置已啟動</span>
+                </div>
+                <button
+                  onClick={deactivateV3}
+                  className="text-[10px] text-red-500 hover:text-red-700"
+                >
+                  停用
+                </button>
+              </div>
+              <div className="text-[10px] text-emerald-600 space-y-0.5">
+                <div>
+                  策略: {v3.config?.strategies.map(s =>
+                    s === "smc_v2" ? "SMC" : s === "explosion_scanner" ? "Explosion" : s === "momentum_breakout" ? "Momentum" : s
+                  ).join(" + ")}
+                </div>
+                <div>
+                  min_cond={v3.config?.params.min_conditions} | min_rr={v3.config?.params.min_rr}
+                </div>
+                <div className="font-medium">
+                  {v3.buyCount} BUY signals | {v3.dataDate && `數據日期: ${v3.dataDate}`}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Strategy list */}
         <div className="flex-1 overflow-y-auto px-5 py-3 space-y-2">

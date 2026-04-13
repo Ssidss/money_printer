@@ -84,18 +84,31 @@ export function PortfolioClient() {
   const [loading, setLoading] = useState(true)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
 
+  const [latestPriceMap, setLatestPriceMap] = useState<Record<string, number>>({})
+  const [priceDateMap, setPriceDateMap] = useState<Record<string, string>>({})
+
   const fetchAll = useCallback(async () => {
     try {
-      const [h, t, a, tr] = await Promise.allSettled([
+      const [h, t, a, tr, lp] = await Promise.allSettled([
         api.holdings(),
         api.transactions(),
         api.latestAnalysis(),
         api.smcTrends(),
+        api.latestPrices(),
       ])
       if (h.status === "fulfilled") setHoldings(h.value)
       if (t.status === "fulfilled") setTxns(t.value)
       if (a.status === "fulfilled") setAllStocks(a.value.results ?? [])
       if (tr.status === "fulfilled") setTrends(tr.value)
+      if (lp.status === "fulfilled" && lp.value.prices) {
+        const pm: Record<string, number> = {}
+        const dm: Record<string, string> = {}
+        for (const [ticker, p] of Object.entries(lp.value.prices)) {
+          if (p.close != null) { pm[ticker] = p.close; dm[ticker] = p.date }
+        }
+        setLatestPriceMap(pm)
+        setPriceDateMap(dm)
+      }
       setLastRefresh(new Date())
     } finally {
       setLoading(false)
@@ -114,6 +127,10 @@ export function PortfolioClient() {
   for (const s of allStocks) {
     analysisMap[s.ticker] = s
     priceMap[s.ticker] = s.close_price
+  }
+  // 用 latest-prices 覆蓋（更即時）
+  for (const [ticker, price] of Object.entries(latestPriceMap)) {
+    priceMap[ticker] = price
   }
 
   const totalCost = holdingsList.reduce((s, h) => s + h.cost_basis, 0)
@@ -213,8 +230,11 @@ export function PortfolioClient() {
                       {isNearStop && <span className="ml-2 text-xs text-red-500 font-medium animate-pulse">⚠ 接近停損</span>}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-700">{h.shares}</td>
-                    <td className="px-4 py-3 text-right font-medium text-slate-800">
-                      {curr ? curr.toFixed(2) : "—"}
+                    <td className="px-4 py-3 text-right">
+                      <div className="font-medium text-slate-800">{curr ? curr.toFixed(2) : "—"}</div>
+                      {priceDateMap[h.ticker] && (
+                        <div className="text-[10px] text-slate-400">{priceDateMap[h.ticker].slice(5)} 收盤</div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right text-slate-500">{h.avg_cost.toFixed(2)}</td>
                     <td className={`px-4 py-3 text-right font-semibold ${pnlPct === null ? "text-slate-400" : pnlPct >= 0 ? "text-green-600" : "text-red-500"}`}>

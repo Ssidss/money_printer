@@ -3,6 +3,7 @@
 import Link from "next/link"
 import type { TopPick, SmcTrendMTF } from "@/lib/api"
 import { useBatchSignals, SignalCell } from "./BatchSignals"
+import { useStrategy } from "@/contexts/StrategyContext"
 
 const REC_BADGE: Record<string, string> = {
   "強力推薦": "bg-green-100 text-green-700",
@@ -67,7 +68,11 @@ export function DashboardStockTable({
   stocks: TopPick[]
   trendsMTF: Record<string, SmcTrendMTF>
 }) {
-  const { signalMap, loading: sigLoading } = useBatchSignals()
+  const { v3 } = useStrategy()
+  const { signalMap: batchSignalMap, loading: batchLoading } = useBatchSignals()
+  // When V3 is active, use V3 signals; otherwise use batch signals
+  const signalMap = v3.active ? v3.signalMap : batchSignalMap
+  const sigLoading = v3.active ? v3.loading : batchLoading
 
   if (stocks.length === 0) {
     return (

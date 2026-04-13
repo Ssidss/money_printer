@@ -59,12 +59,21 @@ function MTFMini({ mtf }: { mtf: SmcTrendMTF }) {
   )
 }
 
+type MarketStatus = {
+  now_et: string
+  market_closed: boolean
+  expected_latest_date: string
+  is_weekend: boolean
+} | null
+
 type Props = {
   priceMap: Record<string, number>
+  priceDateMap: Record<string, string>
+  marketStatus: MarketStatus
   trendsMTF: Record<string, SmcTrendMTF>
 }
 
-export function HoldingsSection({ priceMap, trendsMTF }: Props) {
+export function HoldingsSection({ priceMap, priceDateMap, marketStatus, trendsMTF }: Props) {
   const { user } = useAuth()
   const [holdings, setHoldings] = useState<Holding[]>([])
   const [loading, setLoading] = useState(true)
@@ -94,6 +103,11 @@ export function HoldingsSection({ priceMap, trendsMTF }: Props) {
       <h2 className="text-lg font-semibold text-slate-800 mb-4">
         持倉速覽
         <span className="ml-2 text-sm font-normal text-slate-400">（點股票名稱進入 SMC 分析）</span>
+        {marketStatus && (
+          <span className={`ml-2 text-xs px-2 py-0.5 rounded ${marketStatus.market_closed ? "bg-slate-100 text-slate-500" : "bg-green-100 text-green-700"}`}>
+            {marketStatus.market_closed ? (marketStatus.is_weekend ? "週末休市" : "已收盤") : "盤中"}
+          </span>
+        )}
       </h2>
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
         <table className="w-full text-sm">
@@ -113,6 +127,7 @@ export function HoldingsSection({ priceMap, trendsMTF }: Props) {
           <tbody>
             {holdings.map((h) => {
               const curr = priceMap[h.ticker]
+              const priceDate = priceDateMap[h.ticker]
               const pnlPct = curr ? ((curr - h.avg_cost) / h.avg_cost * 100) : null
               const mtf = trendsMTF[h.ticker]
               const isNearStop = curr != null && curr <= h.stop_loss_price * 1.03
@@ -125,8 +140,11 @@ export function HoldingsSection({ priceMap, trendsMTF }: Props) {
                     <span className="ml-2 text-xs bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded">{h.market}</span>
                     {isNearStop && <span className="ml-2 text-xs text-red-500 font-medium">⚠ 接近停損</span>}
                   </td>
-                  <td className="px-4 py-3 text-right font-medium text-slate-800">
-                    {curr ? curr.toFixed(2) : "—"}
+                  <td className="px-4 py-3 text-right">
+                    <div className="font-medium text-slate-800">{curr ? curr.toFixed(2) : "—"}</div>
+                    {priceDate && (
+                      <div className="text-[10px] text-slate-400">{priceDate.slice(5)} 收盤</div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right text-slate-500">{h.avg_cost.toFixed(2)}</td>
                   <td className={`px-4 py-3 text-right font-semibold ${pnlPct === null ? "text-slate-400" : pnlPct >= 0 ? "text-green-600" : "text-red-500"}`}>

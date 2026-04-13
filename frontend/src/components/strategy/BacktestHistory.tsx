@@ -5,6 +5,7 @@ import { api } from "@/lib/api"
 import type {
   BacktestV3HistoryItem, BacktestV3HistoryResponse,
   BacktestV3CompareResponse, BacktestV3Report,
+  BacktestV3Summary, BacktestV3BenchmarkItem,
 } from "@/lib/api"
 
 // ── Metric helpers ──────────────────────────────────────
@@ -165,11 +166,12 @@ export function BacktestHistory() {
         ) : (
           <div className="space-y-1">
             {/* Header */}
-            <div className="grid grid-cols-[32px_1fr_100px_80px_80px_80px_80px_70px_80px_60px] gap-1 text-[10px] font-medium text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-1.5">
+            <div className="grid grid-cols-[32px_1fr_100px_80px_80px_80px_80px_80px_70px_80px_60px] gap-1 text-[10px] font-medium text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-1.5">
               <div></div>
               <div>Strategies</div>
               <div>Split</div>
               <div className="text-right">Return</div>
+              <div className="text-right">vs SPY</div>
               <div className="text-right">CAGR</div>
               <div className="text-right">MDD</div>
               <div className="text-right">Sharpe</div>
@@ -222,7 +224,7 @@ function HistoryRow({
 }) {
   return (
     <div className={`rounded-lg transition-colors ${isSelected ? "bg-indigo-50" : isDetailOpen ? "bg-slate-50" : "hover:bg-slate-50/50"}`}>
-      <div className="grid grid-cols-[32px_1fr_100px_80px_80px_80px_80px_70px_80px_60px] gap-1 items-center text-xs py-1.5 px-1">
+      <div className="grid grid-cols-[32px_1fr_100px_80px_80px_80px_80px_80px_70px_80px_60px] gap-1 items-center text-xs py-1.5 px-1">
         <div>
           <input
             type="checkbox"
@@ -253,6 +255,17 @@ function HistoryRow({
         <div className="text-slate-500">{item.split} ({item.start_date.slice(2)}~{item.end_date.slice(5)})</div>
         <div className={`text-right font-mono font-semibold ${pctColor(item.total_return_pct)}`}>
           {fmt(item.total_return_pct, 1, "%")}
+        </div>
+        <div className="text-right">
+          {item.alpha_pct != null ? (
+            <span className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-bold ${
+              item.alpha_pct > 0 ? "bg-emerald-50 text-emerald-700" : item.alpha_pct < 0 ? "bg-red-50 text-red-600" : "bg-slate-50 text-slate-500"
+            }`}>
+              {item.alpha_pct > 0 ? "\u25B2" : item.alpha_pct < 0 ? "\u25BC" : "="}{Math.abs(item.alpha_pct).toFixed(1)}%
+            </span>
+          ) : (
+            <span className="text-slate-300 text-[10px]">—</span>
+          )}
         </div>
         <div className={`text-right font-mono font-semibold ${pctColor(item.cagr_pct)}`}>
           {fmt(item.cagr_pct, 1, "%")}
@@ -316,6 +329,11 @@ function DetailPanel({
         <MetricCell label="Profit Factor" value={fmtAbs(s.profit_factor, 2)} />
         <MetricCell label="Trades" value={`${s.total_trades}`} />
       </div>
+
+      {/* Benchmark Comparison */}
+      {report.benchmark && report.benchmark.primary?.ticker && (
+        <BenchmarkSection summary={s} benchmark={report.benchmark} />
+      )}
 
       {/* Strategy breakdown */}
       {bd?.by_strategy && Object.keys(bd.by_strategy).length > 0 && (
@@ -432,6 +450,98 @@ function ComparePanel({ data }: { data: BacktestV3CompareResponse }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Benchmark Section ──────────────────────────────────
+
+function BenchmarkSection({ summary, benchmark }: {
+  summary: BacktestV3Summary
+  benchmark: { primary_ticker: string; primary: BacktestV3BenchmarkItem; all: Record<string, BacktestV3BenchmarkItem> }
+}) {
+  const items = Object.values(benchmark.all)
+  if (items.length === 0) return null
+
+  const alpha = summary.alpha_pct
+
+  return (
+    <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3 mb-4">
+      <div className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-2">
+        Benchmark Comparison
+      </div>
+
+      {/* Strategy vs Benchmarks table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-[10px] text-slate-400 uppercase border-b border-slate-200">
+              <th className="text-left py-1 pr-3 font-medium">Name</th>
+              <th className="text-right py-1 px-2 font-medium">Return</th>
+              <th className="text-right py-1 px-2 font-medium">CAGR</th>
+              <th className="text-right py-1 px-2 font-medium">MDD</th>
+              <th className="text-right py-1 px-2 font-medium">Sharpe</th>
+              <th className="text-right py-1 pl-2 font-medium">Alpha</th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* Strategy row */}
+            <tr className="border-b border-slate-100 font-semibold">
+              <td className="py-1.5 pr-3 text-indigo-700">Strategy</td>
+              <td className={`text-right py-1.5 px-2 font-mono ${pctColor(summary.total_return_pct)}`}>
+                {fmt(summary.total_return_pct, 2, "%")}
+              </td>
+              <td className={`text-right py-1.5 px-2 font-mono ${pctColor(summary.cagr_pct)}`}>
+                {fmt(summary.cagr_pct, 2, "%")}
+              </td>
+              <td className="text-right py-1.5 px-2 font-mono text-red-500">
+                {fmtAbs(summary.max_drawdown_pct, 2, "%")}
+              </td>
+              <td className="text-right py-1.5 px-2 font-mono text-slate-700">
+                {fmtAbs(summary.sharpe_ratio, 3)}
+              </td>
+              <td className="text-right py-1.5 pl-2">
+                {alpha != null ? (
+                  <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                    alpha > 0 ? "bg-emerald-100 text-emerald-700" : alpha < 0 ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-500"
+                  }`}>
+                    {alpha > 0 ? "+" : ""}{alpha.toFixed(2)}%
+                  </span>
+                ) : "—"}
+              </td>
+            </tr>
+            {/* Benchmark rows */}
+            {items.map(bm => {
+              const isBeat = summary.total_return_pct > bm.total_return_pct
+              return (
+                <tr key={bm.ticker} className="border-b border-slate-50">
+                  <td className="py-1.5 pr-3 text-slate-600">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="inline-block w-2 h-2 rounded-full bg-amber-400" />
+                      {bm.ticker} Buy&Hold
+                    </span>
+                  </td>
+                  <td className={`text-right py-1.5 px-2 font-mono ${pctColor(bm.total_return_pct)}`}>
+                    {fmt(bm.total_return_pct, 2, "%")}
+                  </td>
+                  <td className={`text-right py-1.5 px-2 font-mono ${pctColor(bm.cagr_pct)}`}>
+                    {fmt(bm.cagr_pct, 2, "%")}
+                  </td>
+                  <td className="text-right py-1.5 px-2 font-mono text-red-500">
+                    {fmtAbs(bm.max_drawdown_pct, 2, "%")}
+                  </td>
+                  <td className="text-right py-1.5 px-2 font-mono text-slate-700">
+                    {fmtAbs(bm.sharpe_ratio, 3)}
+                  </td>
+                  <td className="text-right py-1.5 pl-2 text-slate-400 text-[10px]">
+                    baseline
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

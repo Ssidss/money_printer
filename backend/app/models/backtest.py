@@ -66,6 +66,10 @@ class BacktestResultV3(Base):
     profit_factor: Mapped[Optional[float]] = mapped_column(nullable=True)
     total_trades: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # Benchmark 比較
+    benchmark_return_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
+    alpha_pct: Mapped[Optional[float]] = mapped_column(nullable=True)
+
     # 參數快照
     params: Mapped[dict] = mapped_column(JSONB, nullable=False)
     # { initial_capital, min_conditions, min_rr, max_positions, risk_per_trade_pct, ... }

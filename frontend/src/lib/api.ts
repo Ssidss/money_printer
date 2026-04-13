@@ -163,6 +163,9 @@ export const api = {
   realtimePrices: () =>
     get<Record<string, RealtimePrice>>(`/api/v1/stocks/realtime`),
 
+  // Latest closing prices (from price_history DB, fast)
+  latestPrices: () => get<LatestPricesResponse>(`/api/v1/stocks/latest-prices`),
+
   // Backtest
   backtestResults: () => get<BacktestSummary[]>("/api/v1/backtest/results"),
   backtestDetail: (id: number) => get<BacktestDetail>(`/api/v1/backtest/results/${id}`),
@@ -252,6 +255,13 @@ export const api = {
   backtestV3HistoryDelete: (id: number) => del(`/api/v3/backtest-v3/history/${id}`),
   backtestV3Compare: (a: number, b: number) => get<BacktestV3CompareResponse>(`/api/v3/backtest-v3/compare?a=${a}&b=${b}`),
 
+  // V3 Strategy Activation (Phase F)
+  backtestV3Activate: (body: V3ActivateRequest) =>
+    post<V3ActiveSignals>("/api/v3/backtest-v3/activate", body),
+  backtestV3ActiveSignals: () => get<V3ActiveSignals>("/api/v3/backtest-v3/active-signals"),
+  backtestV3ActiveConfig: () => get<V3ActiveConfigResponse>("/api/v3/backtest-v3/active-config"),
+  backtestV3Deactivate: () => del<{ message: string }>("/api/v3/backtest-v3/deactivate"),
+
   // Live Signals
   liveSignals: (ticker: string, strategies = "explosion_scanner,momentum_breakout") =>
     get<LiveSignalResponse>(`/api/v3/signals/${encodeURIComponent(ticker)}?strategies=${encodeURIComponent(strategies)}`),
@@ -271,6 +281,25 @@ export type RealtimePrice = {
   price: number; open: number | null; high: number | null; low: number | null
   prev_close: number | null; change: number | null; change_pct: number | null
   volume: number | null; market_cap: number | null
+}
+export type LatestPriceItem = {
+  close: number | null
+  open: number | null
+  high: number | null
+  low: number | null
+  volume: number | null
+  date: string
+  is_fresh: boolean
+  market: string
+}
+export type LatestPricesResponse = {
+  prices: Record<string, LatestPriceItem>
+  market_status: {
+    now_et: string
+    market_closed: boolean
+    expected_latest_date: string
+    is_weekend: boolean
+  }
 }
 export type SmcTrendMTF = {
   daily: string; weekly: string; monthly: string
@@ -753,6 +782,9 @@ export type BacktestV3Summary = {
   trading_days: number
   final_equity: number
   initial_capital: number
+  benchmark_ticker?: string
+  benchmark_return_pct?: number | null
+  alpha_pct?: number | null
 }
 export type BacktestV3Metadata = {
   split: string
@@ -839,6 +871,24 @@ export type BacktestV3Report = {
   kill_switch: { triggered: boolean; reason: string | null; date: string | null }
   open_positions: { ticker: string; strategy_name: string; entry_date: string; entry_price: number; current_price: number; unrealized_pnl_pct: number; size: number; holding_days: number }[]
   metadata: BacktestV3Metadata
+  benchmark?: {
+    primary_ticker: string
+    primary: BacktestV3BenchmarkItem
+    all: Record<string, BacktestV3BenchmarkItem>
+  }
+}
+export type BacktestV3BenchmarkItem = {
+  ticker: string
+  start_date: string
+  end_date: string
+  start_price: number
+  end_price: number
+  total_return_pct: number
+  cagr_pct: number
+  max_drawdown_pct: number
+  sharpe_ratio: number
+  trading_days: number
+  equity_curve: { date: string; equity: number; drawdown_pct: number }[]
 }
 export type BacktestV3Split = {
   name: string
@@ -861,6 +911,8 @@ export type BacktestV3HistoryItem = {
   win_rate_pct: number | null
   profit_factor: number | null
   total_trades: number | null
+  benchmark_return_pct: number | null
+  alpha_pct: number | null
   params: Record<string, unknown>
   duration_seconds: number | null
   stock_count: number | null
@@ -943,6 +995,43 @@ export type BatchSignalResponse = {
   signal_count: number
   results: BatchSignalResult[]
   timing: { data_load_ms: number; compute_ms: number }
+}
+
+// ── V3 Strategy Activation Types (Phase F) ──────────────
+export type V3ActivateRequest = {
+  backtest_id?: number
+  strategies?: string[]
+  min_conditions?: number
+  min_rr?: number
+  market_filter?: string
+}
+
+export type V3ActiveConfig = {
+  backtest_id: number | null
+  backtest_name: string | null
+  strategies: string[]
+  params: {
+    min_conditions: number
+    min_rr: number
+    market_filter: string
+  }
+  activated_at: string
+}
+
+export type V3ActiveSignals = {
+  config: V3ActiveConfig
+  data_date: string
+  stock_count: number
+  signal_count: number
+  buy_count: number
+  results: BatchSignalResult[]
+  errors: string[]
+  timing: { data_load_ms: number; compute_ms: number }
+}
+
+export type V3ActiveConfigResponse = {
+  active: boolean
+  config: V3ActiveConfig | null
 }
 
 export const SSE_URL = `${BASE}/sse/progress`

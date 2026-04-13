@@ -8,6 +8,8 @@ import {
   useMemo,
   type ReactNode,
 } from "react"
+import { api } from "@/lib/api"
+import type { V3ActiveConfig, V3ActiveSignals, BatchSignalResult } from "@/lib/api"
 
 // ── Strategy definitions ────────────────────────────────
 export type StrategyDef = {
@@ -58,12 +60,23 @@ export const STRATEGY_REGISTRY: StrategyDef[] = [
 // ── State types ─────────────────────────────────────────
 export type StrategyMode = "single" | "multi"
 
+export type V3ActivationState = {
+  active: boolean
+  config: V3ActiveConfig | null
+  signals: BatchSignalResult[]
+  signalMap: Record<string, BatchSignalResult[]>  // ticker → signals
+  buyCount: number
+  loading: boolean
+  dataDate: string | null
+}
+
 export type StrategyState = {
   mode: StrategyMode
   selectedStrategies: string[]      // 已選策略 ID 列表
   primaryStrategy: string           // 主策略
   panelOpen: boolean
   registry: StrategyDef[]
+  v3: V3ActivationState             // V3 配置啟動狀態
 }
 
 type StrategyActions = {
@@ -74,6 +87,8 @@ type StrategyActions = {
   togglePanel: () => void
   updateStrategyMetrics: (id: string, metrics: StrategyDef["metrics"]) => void
   primaryDef: StrategyDef | undefined  // useMemo derived, not a function
+  activateV3: (backtestId?: number, params?: { strategies?: string[]; min_conditions?: number; min_rr?: number; market_filter?: string }) => Promise<void>
+  deactivateV3: () => Promise<void>
 }
 
 type StrategyContextType = StrategyState & StrategyActions
@@ -88,6 +103,7 @@ type PersistedState = {
   selectedStrategies: string[]
   primaryStrategy: string
   metricsMap: Record<string, StrategyDef["metrics"]>
+  v3Config: V3ActiveConfig | null
 }
 
 function loadState(): Partial<PersistedState> {
@@ -106,6 +122,25 @@ function saveState(s: PersistedState) {
 }
 
 // ── Provider ────────────────────────────────────────────
+const V3_INITIAL: V3ActivationState = {
+  active: false,
+  config: null,
+  signals: [],
+  signalMap: {},
+  buyCount: 0,
+  loading: false,
+  dataDate: null,
+}
+
+function buildSignalMap(signals: BatchSignalResult[]): Record<string, BatchSignalResult[]> {
+  const map: Record<string, BatchSignalResult[]> = {}
+  for (const s of signals) {
+    if (!map[s.ticker]) map[s.ticker] = []
+    map[s.ticker].push(s)
+  }
+  return map
+}
+
 export function StrategyProvider({ children }: { children: ReactNode }) {
   const [mode, setModeRaw] = useState<StrategyMode>("single")
   const [selectedStrategies, setSelected] = useState<string[]>(["explosion_scanner"])
@@ -113,6 +148,7 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
   const [panelOpen, setPanelOpen] = useState(false)
   const [registry, setRegistry] = useState<StrategyDef[]>(STRATEGY_REGISTRY)
   const [hydrated, setHydrated] = useState(false)
+  const [v3, setV3] = useState<V3ActivationState>(V3_INITIAL)
 
   // Hydrate from localStorage on mount
   useEffect(() => {
@@ -128,6 +164,26 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
         }))
       )
     }
+    // Restore V3 active config — fetch signals from backend if was active
+    if (saved.v3Config) {
+      setV3(prev => ({ ...prev, active: true, config: saved.v3Config!, loading: true }))
+      api.backtestV3ActiveSignals()
+        .then((res) => {
+          setV3({
+            active: true,
+            config: res.config,
+            signals: res.results,
+            signalMap: buildSignalMap(res.results),
+            buyCount: res.buy_count,
+            loading: false,
+            dataDate: res.data_date,
+          })
+        })
+        .catch(() => {
+          // Backend lost state — deactivate
+          setV3(V3_INITIAL)
+        })
+    }
     setHydrated(true)
   }, [])
 
@@ -138,8 +194,8 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     registry.forEach((s) => {
       if (s.metrics) metricsMap[s.id] = s.metrics
     })
-    saveState({ mode, selectedStrategies, primaryStrategy, metricsMap })
-  }, [mode, selectedStrategies, primaryStrategy, registry, hydrated])
+    saveState({ mode, selectedStrategies, primaryStrategy, metricsMap, v3Config: v3.config })
+  }, [mode, selectedStrategies, primaryStrategy, registry, hydrated, v3.config])
 
   // ── Actions ───────────────────────────────────────────
   const setPrimaryStrategy = useCallback((id: string) => {
@@ -184,6 +240,42 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     [registry, primaryStrategy]
   )
 
+  // ── V3 Activation ─────────────────────────────────────
+  const activateV3 = useCallback(async (
+    backtestId?: number,
+    params?: { strategies?: string[]; min_conditions?: number; min_rr?: number; market_filter?: string },
+  ) => {
+    setV3(prev => ({ ...prev, loading: true }))
+    try {
+      const res = await api.backtestV3Activate({
+        backtest_id: backtestId,
+        strategies: params?.strategies,
+        min_conditions: params?.min_conditions,
+        min_rr: params?.min_rr,
+        market_filter: params?.market_filter,
+      })
+      setV3({
+        active: true,
+        config: res.config,
+        signals: res.results,
+        signalMap: buildSignalMap(res.results),
+        buyCount: res.buy_count,
+        loading: false,
+        dataDate: res.data_date,
+      })
+    } catch (e) {
+      setV3(prev => ({ ...prev, loading: false }))
+      throw e
+    }
+  }, [])
+
+  const deactivateV3 = useCallback(async () => {
+    try {
+      await api.backtestV3Deactivate()
+    } catch { /* ignore */ }
+    setV3(V3_INITIAL)
+  }, [])
+
   return (
     <StrategyContext.Provider
       value={{
@@ -192,6 +284,7 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
         primaryStrategy,
         panelOpen,
         registry,
+        v3,
         setPrimaryStrategy,
         toggleStrategy,
         setMode,
@@ -199,6 +292,8 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
         togglePanel,
         updateStrategyMetrics,
         primaryDef,
+        activateV3,
+        deactivateV3,
       }}
     >
       {children}

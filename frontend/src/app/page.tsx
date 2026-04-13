@@ -10,22 +10,34 @@ import type { TopPick, SmcTrendMTF } from "@/lib/api"
 export const revalidate = 60
 
 export default async function Dashboard() {
-  const [picks, latest, statusRes, trendsRes] = await Promise.allSettled([
+  const [picks, latest, statusRes, trendsRes, pricesRes] = await Promise.allSettled([
     api.topPicks(3),
     api.latestAnalysis(),
     api.analysisStatus(),
     api.smcTrendsMTF(),
+    api.latestPrices(),
   ])
 
   const topPicks     = picks.status === "fulfilled" ? picks.value : []
   const latestRes    = latest.status === "fulfilled" ? latest.value : null
   const isRunning    = statusRes.status === "fulfilled" ? statusRes.value.running : false
   const trendsMTF    = trendsRes.status === "fulfilled" ? trendsRes.value : {} as Record<string, SmcTrendMTF>
+  const latestPrices = pricesRes.status === "fulfilled" ? pricesRes.value : null
   const allStocks: TopPick[] = latestRes?.results ?? []
 
-  // 建立 ticker → close_price 的映射
+  // 建立 ticker → close_price 的映射（優先用 price_history 最新收盤價）
   const priceMap: Record<string, number> = {}
+  const priceDateMap: Record<string, string> = {}
   for (const s of allStocks) priceMap[s.ticker] = s.close_price
+  // 用 latest-prices 覆蓋（更即時）
+  if (latestPrices?.prices) {
+    for (const [ticker, p] of Object.entries(latestPrices.prices)) {
+      if (p.close != null) {
+        priceMap[ticker] = p.close
+        priceDateMap[ticker] = p.date
+      }
+    }
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-8">
@@ -75,7 +87,12 @@ export default async function Dashboard() {
       </div>
 
       {/* 持倉速覽 — client component，需要登入才看得到 */}
-      <HoldingsSection priceMap={priceMap} trendsMTF={trendsMTF} />
+      <HoldingsSection
+        priceMap={priceMap}
+        priceDateMap={priceDateMap}
+        marketStatus={latestPrices?.market_status ?? null}
+        trendsMTF={trendsMTF}
+      />
 
       {/* 策略信號總覽 — client component，即時載入 batch signals */}
       <StrategySignalsSummary />

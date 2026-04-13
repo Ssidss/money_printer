@@ -11,9 +11,11 @@ Spec: docs/MULTI_STRATEGY_DESIGN.md 第九節
 from __future__ import annotations
 
 import math
+from datetime import date
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 
 
 def calculate_metrics(result: dict) -> dict:
@@ -328,3 +330,116 @@ def _strategy_correlation(trades: list[dict], equity_curve: list[dict]) -> dict:
                 warnings.append(f"{pair} correlation={val:.2f} > 0.7 — 高度相關，分散效果有限")
 
     return {"matrix": matrix, "warnings": warnings}
+
+
+# ── Benchmark Calculator ──────────────────────────────────────────
+
+
+def calculate_benchmark(
+    price_data: dict[str, pd.DataFrame],
+    start_date: date,
+    end_date: date,
+    initial_capital: float = 100_000,
+    market_filter: str = "US",
+) -> dict:
+    """
+    計算 benchmark（SPY/0050）的 buy & hold 報酬。
+    回傳 benchmark metrics dict，嵌入報告用。
+
+    對每個 benchmark ticker：
+    - 找到 start_date 當天或之後第一個有效收盤價 → 買入
+    - 找到 end_date 當天或之前最後一個有效收盤價 → 賣出
+    - 計算 total_return, CAGR, max_drawdown, Sharpe
+    """
+    # 根據 market 決定 benchmark tickers
+    benchmarks = []
+    if market_filter == "TW":
+        benchmarks = ["0050"]
+    else:
+        benchmarks = ["SPY", "QQQ", "SOXX"]
+
+    results = {}
+    for ticker in benchmarks:
+        df = price_data.get(ticker)
+        if df is None or len(df) == 0:
+            continue
+
+        # 確保 index 是 datetime
+        if not isinstance(df.index, pd.DatetimeIndex):
+            df = df.copy()
+            df.index = pd.to_datetime(df.index)
+
+        # 篩選日期範圍
+        ts_start = pd.Timestamp(start_date)
+        ts_end = pd.Timestamp(end_date)
+        period = df[(df.index >= ts_start) & (df.index <= ts_end)].copy()
+
+        if len(period) < 2:
+            continue
+
+        first_close = float(period.iloc[0]["Close"])
+        last_close = float(period.iloc[-1]["Close"])
+
+        if first_close <= 0:
+            continue
+
+        # Total return
+        total_return_pct = (last_close - first_close) / first_close * 100
+
+        # CAGR
+        trading_days = len(period)
+        years = trading_days / 252
+        if years > 0 and last_close > 0:
+            cagr_pct = ((last_close / first_close) ** (1 / years) - 1) * 100
+        else:
+            cagr_pct = 0.0
+
+        # Max Drawdown
+        closes = period["Close"].values.astype(float)
+        running_max = np.maximum.accumulate(closes)
+        drawdowns = (running_max - closes) / running_max * 100
+        max_dd_pct = float(np.max(drawdowns))
+
+        # Sharpe (daily returns → annualized)
+        daily_rets = np.diff(closes) / closes[:-1]
+        if len(daily_rets) >= 30:
+            sharpe = float(np.mean(daily_rets) / np.std(daily_rets, ddof=1) * math.sqrt(252))
+        else:
+            sharpe = 0.0
+
+        # Equity curve（用初始資金等比例）
+        shares = initial_capital / first_close
+        equity_curve = []
+        for i, (idx, row) in enumerate(period.iterrows()):
+            eq = shares * float(row["Close"])
+            dd = float(drawdowns[i])
+            d = idx.date() if hasattr(idx, 'date') else idx
+            equity_curve.append({
+                "date": str(d),
+                "equity": round(eq, 2),
+                "drawdown_pct": round(dd, 2),
+            })
+
+        results[ticker] = {
+            "ticker": ticker,
+            "start_date": str(period.index[0].date()),
+            "end_date": str(period.index[-1].date()),
+            "start_price": round(first_close, 2),
+            "end_price": round(last_close, 2),
+            "total_return_pct": round(total_return_pct, 2),
+            "cagr_pct": round(cagr_pct, 2),
+            "max_drawdown_pct": round(max_dd_pct, 2),
+            "sharpe_ratio": round(sharpe, 3),
+            "trading_days": trading_days,
+            "equity_curve": equity_curve,
+        }
+
+    # 選主要 benchmark（SPY 或 0050）
+    primary_ticker = "0050" if market_filter == "TW" else "SPY"
+    primary = results.get(primary_ticker, {})
+
+    return {
+        "primary_ticker": primary_ticker,
+        "primary": primary,
+        "all": results,
+    }

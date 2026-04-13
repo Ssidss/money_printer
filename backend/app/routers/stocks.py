@@ -1,7 +1,7 @@
 from __future__ import annotations
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db, AsyncSessionLocal
@@ -98,6 +98,86 @@ async def get_smc_trends(db: AsyncSession = Depends(get_db)):
             except Exception:
                 trends[stock.ticker] = "未知"
     return trends
+
+
+@router.get("/latest-prices")
+async def get_latest_prices(db: AsyncSession = Depends(get_db)):
+    """
+    從 price_history 取每支股票最新收盤價。
+    附帶市場狀態（是否已收盤、價格日期、是否為最新交易日）。
+    不需要外部 API 呼叫，純 DB 查詢，速度快。
+    """
+    # 1. 取所有 active stocks
+    result = await db.execute(select(Stock).where(Stock.is_active == True))
+    stocks = result.scalars().all()
+    stock_map = {s.id: s for s in stocks}
+
+    # 2. 子查詢：每個 stock_id 的最大日期
+    sub = (
+        select(PriceHistory.stock_id, func.max(PriceHistory.date).label("max_date"))
+        .group_by(PriceHistory.stock_id)
+        .subquery()
+    )
+
+    # 3. JOIN 取最新一筆 price
+    q = (
+        select(PriceHistory)
+        .join(sub, and_(
+            PriceHistory.stock_id == sub.c.stock_id,
+            PriceHistory.date == sub.c.max_date,
+        ))
+    )
+    rows = (await db.execute(q)).scalars().all()
+
+    # 4. 判斷美股市場狀態（美東時間）
+    ET = timezone(timedelta(hours=-4))  # EDT（夏令時），冬令為 -5
+    now_et = datetime.now(ET)
+    today_et = now_et.date()
+    weekday = now_et.weekday()  # 0=Mon, 6=Sun
+    market_closed = now_et.hour >= 16 or weekday >= 5  # 4pm ET 後 or 週末
+
+    # 最新交易日推算（不考慮假日，只看週末）
+    if weekday == 5:  # Saturday
+        expected_latest = today_et - timedelta(days=1)
+    elif weekday == 6:  # Sunday
+        expected_latest = today_et - timedelta(days=2)
+    elif now_et.hour < 16:  # weekday but before market close
+        expected_latest = today_et - timedelta(days=1)
+        if expected_latest.weekday() == 6:  # Sunday
+            expected_latest -= timedelta(days=2)
+        elif expected_latest.weekday() == 5:  # Saturday
+            expected_latest -= timedelta(days=1)
+    else:
+        expected_latest = today_et
+
+    # 5. 組合回傳
+    prices = {}
+    for row in rows:
+        stock = stock_map.get(row.stock_id)
+        if not stock:
+            continue
+        price_date = row.date
+        is_fresh = price_date >= expected_latest
+        prices[stock.ticker] = {
+            "close": float(row.close) if row.close else None,
+            "open": float(row.open) if row.open else None,
+            "high": float(row.high) if row.high else None,
+            "low": float(row.low) if row.low else None,
+            "volume": int(row.volume) if row.volume else None,
+            "date": str(price_date),
+            "is_fresh": is_fresh,
+            "market": stock.market,
+        }
+
+    return {
+        "prices": prices,
+        "market_status": {
+            "now_et": now_et.isoformat(),
+            "market_closed": market_closed,
+            "expected_latest_date": str(expected_latest),
+            "is_weekend": weekday >= 5,
+        },
+    }
 
 
 @router.get("/realtime")
