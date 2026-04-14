@@ -295,6 +295,10 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
                 entry = _get_entry(ar)
                 close = float(ar.close_price) if ar.close_price else None
                 distance_pct = round((close - entry["entry"]) / entry["entry"] * 100, 1) if entry and close and entry.get("entry") else None
+
+                # 從 v1_ai_map 取出 AI 筆記（若有）
+                ai_note = v1_ai_map.get(ar.stock_id) if v1_stock_ids else None
+
                 watchlist.append({
                     "ticker": ticker,
                     "market": market,
@@ -305,10 +309,10 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
                     "smc_v2": _smc_from_db(ar),
                     "distance_pct": distance_pct,
                     "signals": ar.signals or [],
-                    "ai_action": None,
-                    "ai_summary_preview": None,
-                    "ai_note_id": None,
-                    "ai_note_at": None,
+                    "ai_action": ai_note.action if ai_note else None,
+                    "ai_summary_preview": ai_note.summary if ai_note else None,
+                    "ai_note_id": str(ai_note.id) if ai_note else None,
+                    "ai_note_at": ai_note.created_at.isoformat() if ai_note else None,
                 })
                 if len(watchlist) >= 10:
                     break
@@ -345,17 +349,16 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
     # 構造 (stock_id, latest_date) 配對
     prev_price_map = {}
     if idx_ar_map:
-        # 對每個股票，查詢比其最新日期更早的前一條記錄
-        # 使用一個統一查詢：取所有 idx_ar_map 中的股票，按日期排序，去掉重複
-        all_idx_ar = list(idx_ar_map.values())
+        # 對每個股票，查詢最新的 2 筆記錄（latest + previous）
         prev_ar_r = await db.execute(
             select(AnalysisResult)
             .where(AnalysisResult.stock_id.in_(list(idx_ar_map.keys())))
             .order_by(AnalysisResult.stock_id, desc(AnalysisResult.analysis_date))
+            .limit(2)  # 只取最新 2 筆，避免載入完整歷史
         )
         all_prev_ars = prev_ar_r.scalars().all()
 
-        # 組織成 {stock_id: [latest_ar, prev_ar, ...]}
+        # 組織成 {stock_id: [latest_ar, prev_ar]}
         ar_by_stock = {}
         for ar in all_prev_ars:
             if ar.stock_id not in ar_by_stock:
