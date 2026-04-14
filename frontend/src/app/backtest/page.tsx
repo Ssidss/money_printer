@@ -1,18 +1,73 @@
+"use client"
+import { useState, useEffect } from "react"
 import { api } from "@/lib/api"
 import { BacktestForm } from "@/components/backtest/BacktestForm"
+import { StockBacktestClient } from "@/components/backtest/StockBacktestClient"
 
-export const revalidate = 0
+export default function BacktestPage() {
+  const [activeTab, setActiveTab] = useState<"strategy" | "stock">("strategy")
 
-export default async function BacktestPage() {
-  const results = await api.backtestResults().catch(() => [])
+  const tabs: Array<{ id: "strategy" | "stock"; label: string; icon: string }> = [
+    { id: "strategy", label: "策略回測", icon: "📊" },
+    { id: "stock", label: "個股策略回測", icon: "📈" },
+  ]
 
   return (
     <div className="max-w-7xl mx-auto space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-slate-800">回測</h1>
-        <p className="text-slate-500 text-sm mt-1">歷史策略驗證 · 參數最佳化</p>
+        <p className="text-slate-500 text-sm mt-1">歷史策略驗證 · 績效分析</p>
       </div>
 
+      {/* Tab Navigation */}
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex-1 px-4 py-2.5 rounded-md text-sm font-medium transition-colors ${
+              activeTab === tab.id
+                ? "bg-white text-slate-800 shadow-sm"
+                : "text-slate-600 hover:text-slate-800"
+            }`}
+          >
+            <span className="mr-1">{tab.icon}</span>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Strategy Backtest Tab */}
+      {activeTab === "strategy" && (
+        <StrategyBacktestContent />
+      )}
+
+      {/* Stock Backtest Tab */}
+      {activeTab === "stock" && (
+        <StockBacktestClient />
+      )}
+    </div>
+  )
+}
+
+// 策略回測內容元件
+function StrategyBacktestContent() {
+  const [results, setResults] = useState<any[]>([])
+
+  useEffect(() => {
+    const loadResults = async () => {
+      try {
+        const data = await api.backtestResults()
+        setResults(data)
+      } catch (err) {
+        console.error("Failed to load backtest results:", err)
+      }
+    }
+    loadResults()
+  }, [])
+
+  return (
+    <div className="space-y-6">
       {/* Form */}
       <BacktestForm />
 
