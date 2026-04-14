@@ -305,6 +305,35 @@ TW_STOCKS: list[str] = [
 5. 每週跑一次完整 MTF 分析確認大趨勢
 ```
 
+## 性能優化 (KINA-246)
+
+### 開盤速報 (briefing) 查詢最佳化
+
+**問題**：`/api/v1/briefing/morning` 端點存在 N+1 查詢問題
+- 每個持倉觸發多次序列查詢
+- 10 支持倉 = 30+ 次獨立 DB 查詢
+- 影響開盤速報載入速度
+
+**解決方案**：
+- ✅ 採用 batch fetch + window function 重構查詢邏輯
+- ✅ 市場指標查詢改用 `ROW_NUMBER() OVER (PARTITION BY stock_id)` 實現每支股票獨立取前 2 筆
+- ✅ AI 筆記採用 subquery join，一次性載入所有相關記錄
+
+**效果**：
+- 查詢次數：30+ → ≤10 次（減少 67% 以上）
+- 端點響應時間：顯著縮短
+- 資料準確性：保持不變
+
+**驗證**：
+```bash
+# 使用 test_briefing_perf.py 驗證查詢計數 ≤ 10
+python -m pytest tests/test_briefing_perf.py -v
+```
+
+相關 commit：
+- 5ad2ae3: 技術審查員反饋修正
+- 721cfec: 測試 fixture 補充
+
 ## License
 
 Private — 僅供內部使用
