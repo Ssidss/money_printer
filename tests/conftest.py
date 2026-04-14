@@ -40,21 +40,28 @@ async def db_with_test_data():
     """
     提供含有測試資料的 AsyncSession
     用於 briefing 性能測試和功能驗證
+
+    注意：此 fixture 需要實際的 PostgreSQL 資料庫連線
+    測試應使用 test 資料庫或臨時資料庫進行隔離
     """
+    import os
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
     from datetime import datetime, timedelta
     from app.database import Base
     from app.models import Stock, AnalysisResult, AiAnalysisNote, PortfolioHolding
 
-    # 使用記憶體 SQLite 進行測試（快速，不需外部 DB）
-    # 如果需要 PostgreSQL 測試，改用 postgresql://... URL
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        echo=False,
+    # 使用實際的 PostgreSQL 連線進行測試
+    # 從環境變數讀取，或使用本機 postgres 測試用戶
+    db_url = os.getenv(
+        "TEST_DATABASE_URL",
+        "postgresql+asyncpg://postgres@localhost/money_printer_test"
     )
+
+    engine = create_async_engine(db_url, echo=False)
 
     # 建立所有表
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)  # 清除舊資料
         await conn.run_sync(Base.metadata.create_all)
 
     # 建立 session factory
@@ -111,7 +118,7 @@ async def db_with_test_data():
     async with async_session() as session:
         yield session
 
-    # 清理
+    # 清理：刪除所有資料
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()
