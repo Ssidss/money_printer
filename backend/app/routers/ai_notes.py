@@ -1,16 +1,17 @@
 from __future__ import annotations
 """
 AI 分析筆記 API
-- POST   /ai-notes           建立 AI 分析筆記
-- GET    /ai-notes            取得所有筆記（可過濾 ticker）
-- GET    /ai-notes/latest     取得每支股票最新一筆 AI 筆記（用於清單頁顯示）
-- GET    /ai-notes/{id}       取得單筆筆記
-- DELETE /ai-notes/{id}       刪除筆記
+- POST   /ai-notes                      建立 AI 分析筆記
+- GET    /ai-notes                      取得所有筆記（可過濾 ticker）
+- GET    /ai-notes/latest               取得每支股票最新一筆 AI 筆記（用於清單頁顯示）
+- GET    /ai-notes/strategy-memory      策略失誤分析 + 記憶摘要結構（KINA-277）
+- GET    /ai-notes/{id}                 取得單筆筆記
+- DELETE /ai-notes/{id}                 刪除筆記
 """
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +23,41 @@ from ..services.auth import get_optional_user
 from ..services.ai_note_result_backfill import backfill_ai_note_results
 
 router = APIRouter(prefix="/ai-notes", tags=["ai-notes"])
+
+
+# ── Pydantic Response Models ────────────────────────────────────────
+
+
+class StrategyPattern(BaseModel):
+    """特定 smc_trend × recommendation 組合的績效統計"""
+    smc_trend: str = Field(..., description="SMC 趨勢（上升趨勢 / 盤整 / 下降趨勢）")
+    recommendation: str = Field(..., description="推薦等級（強力推薦 / 推薦 / 觀察 / 不推薦）")
+    win_rate: float = Field(..., ge=0, le=1, description="勝率 = hit_target / total_sample")
+    avg_return_pct: float = Field(..., description="平均回報百分比")
+    sample_count: int = Field(..., ge=0, description="樣本數量")
+    risk_level: str = Field(..., description="風險等級（low/medium/high）")
+
+
+class FailurePattern(BaseModel):
+    """失敗率高於 50% 的策略組合警告"""
+    condition: str = Field(..., description="條件描述（smc_trend + recommendation）")
+    failure_rate: float = Field(..., ge=0, le=1, description="失敗率 = (hit_stop + expired) / total")
+    avg_loss_pct: float = Field(..., description="平均虧損百分比")
+    warning: str = Field(..., description="警告訊息")
+
+
+class StrategySummary(BaseModel):
+    """策略分析摘要"""
+    best_condition: Optional[str] = Field(None, description="最佳的策略組合條件")
+    worst_condition: Optional[str] = Field(None, description="最差的策略組合條件")
+
+
+class StrategyMemoryResponse(BaseModel):
+    """策略記憶分析結果"""
+    patterns: List[StrategyPattern] = Field(..., description="按 smc_trend × recommendation 分組的績效統計")
+    top_failure_patterns: List[FailurePattern] = Field(..., description="失敗率 > 50% 的頂層組合（最多 5 筆）")
+    total_analyzed: int = Field(..., ge=0, description="分析的已結束筆記總數")
+    summary: StrategySummary = Field(..., description="策略分析摘要")
 
 
 class AiNoteCreate(BaseModel):
@@ -164,6 +200,23 @@ async def get_latest_notes(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/strategy-memory", response_model=StrategyMemoryResponse)
+async def get_strategy_memory_endpoint(db: AsyncSession = Depends(get_db)):
+    """
+    KINA-277: 策略失誤分析 API + 記憶摘要結構
+
+    分析 AI 分析筆記的歷史績效，按照 SMC 趨勢和推薦等級進行分組統計，
+    識別高失敗率的策略組合，供系統學習和調整。
+
+    Returns:
+    - patterns: 按 smc_trend × recommendation 分組的績效統計
+    - top_failure_patterns: 失敗率 > 50% 的頂層組合（最多 5 筆）
+    - total_analyzed: 分析的已結束筆記總數
+    - summary: 最佳和最差的策略條件
+    """
+    return await get_strategy_memory(db)
+
+
 # ── 具體路由 (KINA-264: 必須在通用路由 /{note_id} 之前定義) ──────────────
 
 
@@ -178,6 +231,119 @@ async def trigger_backfill_results(db: AsyncSession = Depends(get_db)):
         "message": "AI notes 結果回填完成",
         "stats": stats,
     }
+
+
+async def get_strategy_memory(db: AsyncSession = Depends(get_db)) -> StrategyMemoryResponse:
+    """
+    (Internal function) 策略失誤分析和記憶摘要結構
+
+    邏輯：
+    1. 從 ai_analysis_notes 過濾 outcome_status != pending
+    2. GROUP BY smc_trend × recommendation
+    3. 計算每組的 win_rate、avg_return_pct、sample_count
+    4. 識別失敗率 > 50% 的組合（top_failure_patterns）
+    5. 確定最佳和最差的策略條件
+    """
+    # 獲取所有已結束的筆記
+    completed = await db.execute(
+        select(AiAnalysisNote).where(
+            AiAnalysisNote.outcome_status != "pending"
+        )
+    )
+    notes = completed.scalars().all()
+
+    if not notes:
+        return StrategyMemoryResponse(
+            patterns=[],
+            top_failure_patterns=[],
+            total_analyzed=0,
+            summary=StrategySummary(best_condition=None, worst_condition=None)
+        )
+
+    # 按 (smc_trend, recommendation) 分組
+    pattern_groups: dict = {}
+    for note in notes:
+        key = (note.smc_trend, note.recommendation)
+        if key not in pattern_groups:
+            pattern_groups[key] = []
+        pattern_groups[key].append(note)
+
+    # 計算每組的統計
+    patterns = []
+    for (smc_trend, recommendation), group_notes in pattern_groups.items():
+        sample_count = len(group_notes)
+        hit_target_count = sum(1 for n in group_notes if n.outcome_status == "hit_target")
+
+        # 計算勝率
+        win_rate = hit_target_count / sample_count if sample_count > 0 else 0.0
+
+        # 計算平均回報百分比
+        returns = [float(n.actual_return_pct) for n in group_notes if n.actual_return_pct is not None]
+        avg_return_pct = sum(returns) / len(returns) if returns else 0.0
+
+        # 判定風險等級
+        if win_rate < 0.4:
+            risk_level = "high"
+        elif win_rate < 0.6:
+            risk_level = "medium"
+        else:
+            risk_level = "low"
+
+        pattern = StrategyPattern(
+            smc_trend=smc_trend,
+            recommendation=recommendation,
+            win_rate=round(win_rate, 2),
+            avg_return_pct=round(avg_return_pct, 2),
+            sample_count=sample_count,
+            risk_level=risk_level
+        )
+        patterns.append(pattern)
+
+    # 識別失敗率 > 50% 的組合
+    failure_patterns = []
+    for (smc_trend, recommendation), group_notes in pattern_groups.items():
+        sample_count = len(group_notes)
+        failed_count = sample_count - sum(1 for n in group_notes if n.outcome_status == "hit_target")
+        failure_rate = failed_count / sample_count if sample_count > 0 else 0.0
+
+        if failure_rate > 0.5:
+            # 計算平均虧損百分比
+            losses = [float(n.actual_return_pct) for n in group_notes if n.actual_return_pct is not None and n.actual_return_pct < 0]
+            avg_loss_pct = sum(losses) / len(losses) if losses else 0.0
+
+            condition = f"{smc_trend} + {recommendation}"
+            warning = f"{smc_trend}市況下{recommendation}失誤率高達 {failure_rate*100:.0f}%，建議審視策略"
+
+            failure_patterns.append(FailurePattern(
+                condition=condition,
+                failure_rate=round(failure_rate, 2),
+                avg_loss_pct=round(avg_loss_pct, 2),
+                warning=warning
+            ))
+
+    # 按失敗率降序排序，取前 5 筆
+    failure_patterns = sorted(failure_patterns, key=lambda x: x.failure_rate, reverse=True)[:5]
+
+    # 確定最佳和最差的策略條件
+    best_condition = None
+    worst_condition = None
+    if patterns:
+        best_pattern = max(patterns, key=lambda x: x.win_rate)
+        worst_pattern = min(patterns, key=lambda x: x.win_rate)
+        best_condition = f"{best_pattern.smc_trend} + {best_pattern.recommendation}"
+        worst_condition = f"{worst_pattern.smc_trend} + {worst_pattern.recommendation}"
+
+    summary = StrategySummary(
+        best_condition=best_condition,
+        worst_condition=worst_condition
+    )
+
+    return StrategyMemoryResponse(
+        patterns=patterns,
+        top_failure_patterns=failure_patterns,
+        total_analyzed=len(notes),
+        summary=summary
+    )
 
 
 @router.get("/performance")

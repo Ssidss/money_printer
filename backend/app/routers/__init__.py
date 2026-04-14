@@ -1,1 +1,1 @@
-from . import stocks, analysis, portfolio, backtest, sse, telegram, smc_v2
+from . import stocks, analysis, portfolio, sse, telegram, smc_v2
