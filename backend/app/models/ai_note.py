@@ -53,6 +53,19 @@ class AiAnalysisNote(Base):
     # 額外結構化資料（如情境分析、觸發條件等）
     scenarios: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
+    # 交易結果追蹤（Phase 1 — TradeMemory Protocol）
+    outcome_status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    # "pending"    = 等待結果回填
+    # "hit_target" = 達到目標價
+    # "hit_stop"   = 達到停損價
+    # "expired"    = 超過有效期限（30天）
+    actual_return_pct: Mapped[Optional[float]] = mapped_column(Numeric(6, 2), nullable=True)
+    # 實際回報百分比 = (closed_price - entry_price) / entry_price * 100
+    closed_price: Mapped[Optional[float]] = mapped_column(Numeric(14, 4), nullable=True)
+    # 平倉價格（當 outcome_status != pending 時被設定）
+    closed_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMPTZ, nullable=True)
+    # 結果評估時間
+
     # 紀錄是誰產的（nullable = 相容舊資料 / CLI 執行）
     created_by: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True,

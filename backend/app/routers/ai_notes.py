@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -19,6 +19,7 @@ from ..models.stock import Stock
 from ..models.user import User
 from ..models.ai_note import AiAnalysisNote
 from ..services.auth import get_optional_user
+from ..services.ai_note_result_backfill import backfill_ai_note_results
 
 router = APIRouter(prefix="/ai-notes", tags=["ai-notes"])
 
@@ -39,6 +40,14 @@ class AiNoteCreate(BaseModel):
     scenarios: Optional[dict] = None        # 情境分析 JSON
 
 
+class AiNoteUpdate(BaseModel):
+    """用於回填實際結果的 patch"""
+    outcome_status: str                     # pending / hit_target / hit_stop / expired
+    actual_return_pct: Optional[float] = None
+    closed_price: Optional[float] = None
+    closed_at: Optional[datetime] = None
+
+
 def _note_to_dict(note: AiAnalysisNote, ticker: str | None = None) -> dict:
     return {
         "id": note.id,
@@ -56,6 +65,10 @@ def _note_to_dict(note: AiAnalysisNote, ticker: str | None = None) -> dict:
         "target_price": float(note.target_price) if note.target_price else None,
         "rr_ratio": float(note.rr_ratio) if note.rr_ratio else None,
         "scenarios": note.scenarios,
+        "outcome_status": note.outcome_status,
+        "actual_return_pct": float(note.actual_return_pct) if note.actual_return_pct else None,
+        "closed_price": float(note.closed_price) if note.closed_price else None,
+        "closed_at": note.closed_at.isoformat() if note.closed_at else None,
         "created_by": note.created_by,
         "created_at": note.created_at.isoformat() if note.created_at else None,
     }
@@ -164,6 +177,139 @@ async def get_ai_note(note_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, f"筆記 #{note_id} 不存在")
     note, ticker = row
     return _note_to_dict(note, ticker)
+
+
+@router.patch("/{note_id}/outcome")
+async def update_ai_note_outcome(
+    note_id: int,
+    body: AiNoteUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """更新 AI 分析筆記的交易結果"""
+    result = await db.execute(select(AiAnalysisNote).where(AiAnalysisNote.id == note_id))
+    note = result.scalar_one_or_none()
+    if not note:
+        raise HTTPException(404, f"筆記 #{note_id} 不存在")
+
+    note.outcome_status = body.outcome_status
+    note.actual_return_pct = body.actual_return_pct
+    note.closed_price = body.closed_price
+    note.closed_at = body.closed_at
+
+    await db.commit()
+    await db.refresh(note)
+    return {
+        "message": f"筆記 #{note_id} 交易結果已更新",
+        "outcome_status": note.outcome_status,
+        "actual_return_pct": float(note.actual_return_pct) if note.actual_return_pct else None,
+    }
+
+
+@router.post("/backfill-results")
+async def trigger_backfill_results(db: AsyncSession = Depends(get_db)):
+    """
+    手動觸發 AI 分析筆記結果回填。
+    檢查所有 pending 的筆記，根據當前股價更新 outcome_status 和 actual_return_pct。
+    """
+    stats = await backfill_ai_note_results(db)
+    return {
+        "message": "AI notes 結果回填完成",
+        "stats": stats,
+    }
+
+
+@router.get("/performance")
+async def get_ai_notes_performance(db: AsyncSession = Depends(get_db)):
+    """
+    獲取 AI 分析筆記績效統計。
+    返回：
+    - 總筆數
+    - 各 recommendation 等級的統計
+    - 平均回報 / 勝率 / 平均 R:R vs 實現 R:R
+    """
+    # 獲取所有已結束的筆記（outcome_status != pending）
+    completed = await db.execute(
+        select(AiAnalysisNote).where(
+            AiAnalysisNote.outcome_status != "pending"
+        )
+    )
+    notes = completed.scalars().all()
+
+    if not notes:
+        return {
+            "total_notes": 0,
+            "completed_notes": 0,
+            "by_recommendation": {},
+            "stats": {
+                "win_rate": None,
+                "avg_return_pct": None,
+                "avg_rr_ratio": None,
+                "avg_realized_rr_ratio": None,
+                "hit_target": 0,
+                "hit_stop": 0,
+                "expired": 0,
+            }
+        }
+
+    # 計算統計
+    hits_target = sum(1 for n in notes if n.outcome_status == "hit_target")
+    hits_stop = sum(1 for n in notes if n.outcome_status == "hit_stop")
+    expired = sum(1 for n in notes if n.outcome_status == "expired")
+    total_completed = len(notes)
+
+    # 平均回報
+    returns = [float(n.actual_return_pct) for n in notes if n.actual_return_pct is not None]
+    avg_return = sum(returns) / len(returns) if returns else None
+
+    # 勝率 = hit_target / total_completed
+    win_rate = (hits_target / total_completed) if total_completed > 0 else None
+
+    # 平均預期 R:R
+    rr_ratios = [float(n.rr_ratio) for n in notes if n.rr_ratio is not None]
+    avg_rr = sum(rr_ratios) / len(rr_ratios) if rr_ratios else None
+
+    # 平均實現 R:R = 實現回報 / 風險（停損距離）
+    realized_rr_ratios = []
+    for n in notes:
+        if n.actual_return_pct is not None and n.entry_price is not None and n.stop_price is not None:
+            risk = float(n.entry_price) - float(n.stop_price)
+            if risk != 0:
+                realized_rr = float(n.actual_return_pct) / (risk / float(n.entry_price) * 100)
+                realized_rr_ratios.append(realized_rr)
+    avg_realized_rr = sum(realized_rr_ratios) / len(realized_rr_ratios) if realized_rr_ratios else None
+
+    # 按推薦等級分組統計
+    by_rec = {}
+    for rec_type in ["強力推薦", "推薦", "觀察", "不推薦"]:
+        rec_notes = [n for n in notes if n.recommendation == rec_type]
+        if rec_notes:
+            rec_hits = sum(1 for n in rec_notes if n.outcome_status == "hit_target")
+            rec_returns = [float(n.actual_return_pct) for n in rec_notes if n.actual_return_pct is not None]
+            by_rec[rec_type] = {
+                "count": len(rec_notes),
+                "hit_target": rec_hits,
+                "win_rate": (rec_hits / len(rec_notes)) if len(rec_notes) > 0 else None,
+                "avg_return_pct": (sum(rec_returns) / len(rec_returns)) if rec_returns else None,
+            }
+
+    # 所有未結束的筆記
+    total_result = await db.execute(select(func.count(AiAnalysisNote.id)))
+    total_notes = total_result.scalar()
+
+    return {
+        "total_notes": total_notes,
+        "completed_notes": total_completed,
+        "by_recommendation": by_rec,
+        "stats": {
+            "win_rate": win_rate,
+            "avg_return_pct": avg_return,
+            "avg_rr_ratio": avg_rr,
+            "avg_realized_rr_ratio": avg_realized_rr,
+            "hit_target": hits_target,
+            "hit_stop": hits_stop,
+            "expired": expired,
+        }
+    }
 
 
 @router.delete("/{note_id}")
