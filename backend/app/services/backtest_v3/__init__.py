@@ -8,7 +8,6 @@ from .models import (
 )
 from .provider import DataProvider, HistoricalProvider
 from .strategy import BaseStrategy
-from .engine import BacktestEngine
 from .metrics import calculate_metrics
 from ..strategies import SMCStrategy, MomentumBreakoutStrategy, ExplosionScannerStrategy
 
@@ -16,7 +15,7 @@ __all__ = [
     "Signal", "Decision", "Order", "Position", "Portfolio",
     "SizingModel", "ExecutionModel", "KillSwitch",
     "DataProvider", "HistoricalProvider",
-    "BaseStrategy", "BacktestEngine",
+    "BaseStrategy",
     "calculate_metrics",
     "SMCStrategy", "MomentumBreakoutStrategy", "ExplosionScannerStrategy",
 ]

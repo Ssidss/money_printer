@@ -10,9 +10,9 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from ..models import Signal
-from ..provider import DataProvider
-from ..strategy import BaseStrategy
+from ..backtest_v3.models import Signal
+from ..backtest_v3.provider import DataProvider
+from ..backtest_v3.strategy import BaseStrategy
 
 # Existing SMC modules
 from ...smc import run_smc_analysis_v2
