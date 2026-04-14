@@ -71,3 +71,30 @@ def test_database_url_with_password():
     )
     url = settings.DATABASE_URL
     assert url == "postgresql+asyncpg://postgres:mypassword@localhost:5432/money_printer"
+
+
+def test_secret_key_fail_fast_on_production_default():
+    """[SECURITY] 在生產環境使用預設 SECRET_KEY 應該立即拋出異常"""
+    with pytest.raises(ValueError, match="SECRET_KEY.*production"):
+        Settings(
+            ENVIRONMENT="production",
+            SECRET_KEY="dev-only-change-in-production-please",
+        )
+
+
+def test_secret_key_allowed_on_development_default():
+    """在開發環境使用預設 SECRET_KEY 應該被允許"""
+    settings = Settings(
+        ENVIRONMENT="development",
+        SECRET_KEY="dev-only-change-in-production-please",
+    )
+    assert settings.SECRET_KEY == "dev-only-change-in-production-please"
+
+
+def test_secret_key_allowed_on_production_custom():
+    """在生產環境使用自訂 SECRET_KEY 應該被允許"""
+    settings = Settings(
+        ENVIRONMENT="production",
+        SECRET_KEY="my-super-secret-key-xyz123",
+    )
+    assert settings.SECRET_KEY == "my-super-secret-key-xyz123"

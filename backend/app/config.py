@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
 
 
 class Settings(BaseSettings):
@@ -30,6 +31,18 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-only-change-in-production-please"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 小時
     ALGORITHM: str = "HS256"
+
+    @model_validator(mode="after")
+    def _validate_secret_key_in_production(self) -> Settings:
+        """[CRITICAL-SEC] 生產環境必須使用自訂 SECRET_KEY，不允許預設值"""
+        default_key = "dev-only-change-in-production-please"
+        if self.ENVIRONMENT == "production" and self.SECRET_KEY == default_key:
+            raise ValueError(
+                f"CRITICAL SECURITY ERROR: Cannot use default SECRET_KEY in production. "
+                f"Set SECRET_KEY environment variable to a strong random value. "
+                f"Current: ENVIRONMENT='{self.ENVIRONMENT}', SECRET_KEY='{default_key}'"
+            )
+        return self
 
     # ── 通知 ───────────────────────────────────────────────
     DISCORD_WEBHOOK_URL: str = ""
