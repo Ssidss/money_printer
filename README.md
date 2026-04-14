@@ -1,6 +1,13 @@
-# Money Printer v2 — SMC 股票分析系統
+# Money Printer — SMC 股票分析系統
 
 自動化美股 / 台股分析系統，基於 Smart Money Concepts (SMC) + 多時間框架 (MTF) 結構分析，提供分層決策與倉位管理建議。
+
+## Repositories
+
+| 平台 | URL |
+|------|-----|
+| GitHub | https://github.com/Ssidss/money_printer |
+| Gitea | https://git.ose.tw/king-army/money-printer |
 
 ## 功能特色
 
@@ -11,7 +18,8 @@
 - **即時報價** — 手動觸發 yfinance 盤中報價
 - **持倉管理** — 買入 / 賣出 / 損益追蹤 / 自動停損停利
 - **新聞情緒** — RSS 自動抓取 + 情緒分析作為催化劑
-- **AI 分析筆記** — 儲存每次分析記錄，追蹤歷史推薦
+- **AI 分析筆記** — 儲存每次分析記錄，追蹤歷史推薦、勝率追蹤（`actual_return_pct`）
+- **VectorBT 回測** — Dashboard 內建策略回測（SMC、動量突破、爆發掃描），向量化引擎
 - **Telegram 通知** — 推送分析結果到手機
 
 ## 技術棧
@@ -21,7 +29,8 @@
 | 後端 | FastAPI + SQLAlchemy 2.0 (async) + asyncpg |
 | 資料庫 | PostgreSQL 15 |
 | 前端 | Next.js 16 + TypeScript + Tailwind CSS v4 |
-| 資料源 | yfinance（美股）+ TWSE API（台股歷史數據）|
+| 資料源 | yfinance（美股）+ TWSE 官方 API（台股歷史數據）|
+| 回測引擎 | VectorBT（向量化，防前視偏誤）|
 | Python | 3.11（建議用 conda 管理）|
 
 ## 系統架構
@@ -101,7 +110,9 @@ Layer 5: MTF 對齊
 ### 2. Clone 專案
 
 ```bash
-git clone <repo-url> money_printer
+git clone https://github.com/Ssidss/money_printer.git money_printer
+# 或從 Gitea
+# git clone https://git.ose.tw/king-army/money-printer.git money_printer
 cd money_printer
 ```
 
