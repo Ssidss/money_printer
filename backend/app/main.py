@@ -25,7 +25,7 @@ from .models import (
     StrategyProfile, BacktestResultV2, BacktestTrade, BacktestEquity, StrategySignal,
 )
 from .routers import stocks, analysis, portfolio, backtest, sse, telegram, ai_notes, briefing, smc_v2
-from .routers import strategies, backtest_v2, backtest_v3, auth, scanner, signals
+from .routers import strategies, backtest_v2, backtest_v3, auth, scanner, signals, backtest_vbt
 from .services.fetcher import ensure_stock_exists
 
 logger = logging.getLogger(__name__)
@@ -117,6 +117,7 @@ app.include_router(stocks.router, prefix="/api/v1")
 app.include_router(analysis.router, prefix="/api/v1")
 app.include_router(portfolio.router, prefix="/api/v1")
 app.include_router(backtest.router, prefix="/api/v1")
+app.include_router(backtest_vbt.router, prefix="/api/v1")
 app.include_router(telegram.router, prefix="/api/v1")
 app.include_router(ai_notes.router, prefix="/api/v1")
 app.include_router(briefing.router, prefix="/api/v1")
