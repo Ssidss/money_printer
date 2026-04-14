@@ -7,7 +7,7 @@ v2 升級：優先從 DB 的 smc_data/entry_plan JSONB 讀取，不再即時計�
 """
 from datetime import date
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -63,15 +63,54 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
     )
     holdings_raw = holdings_r.all()
 
+    # 提取所有持倉的 stock_id
+    holding_stock_ids = [h.stock_id for h, _, _, _ in holdings_raw]
+
+    # ── 批量查詢所有持倉的最新 AnalysisResult（避免 N+1） ──
+    # 子查詢：每個 stock_id 的最新 analysis_date
+    latest_ar_subq = (
+        select(AnalysisResult.stock_id, func.max(AnalysisResult.analysis_date).label("latest_date"))
+        .where(AnalysisResult.stock_id.in_(holding_stock_ids))
+        .group_by(AnalysisResult.stock_id)
+        .subquery()
+    )
+    latest_ar_map = {}
+    if holding_stock_ids:
+        ar_r = await db.execute(
+            select(AnalysisResult)
+            .join(latest_ar_subq, and_(
+                AnalysisResult.stock_id == latest_ar_subq.c.stock_id,
+                AnalysisResult.analysis_date == latest_ar_subq.c.latest_date
+            ))
+        )
+        for ar in ar_r.scalars():
+            latest_ar_map[ar.stock_id] = ar
+
+    # ── 批量查詢所有持倉的最新 AiAnalysisNote（避免 N+1） ──
+    # 子查詢：每個 stock_id 的最新 created_at
+    latest_ai_subq = (
+        select(AiAnalysisNote.stock_id, func.max(AiAnalysisNote.created_at).label("latest_time"))
+        .where(AiAnalysisNote.stock_id.in_(holding_stock_ids))
+        .group_by(AiAnalysisNote.stock_id)
+        .subquery()
+    )
+    latest_ai_map = {}
+    if holding_stock_ids:
+        ai_r = await db.execute(
+            select(AiAnalysisNote)
+            .join(latest_ai_subq, and_(
+                AiAnalysisNote.stock_id == latest_ai_subq.c.stock_id,
+                AiAnalysisNote.created_at == latest_ai_subq.c.latest_time
+            ))
+        )
+        for ai in ai_r.scalars():
+            latest_ai_map[ai.stock_id] = ai
+
     portfolio_items = []
     for h, ticker, market, name in holdings_raw:
-        # 取最新分析（含 smc_data）
-        ar = (await db.execute(
-            select(AnalysisResult)
-            .where(AnalysisResult.stock_id == h.stock_id)
-            .order_by(AnalysisResult.analysis_date.desc())
-            .limit(1)
-        )).scalar_one_or_none()
+        # 從查找表取得最新分析和 AI 筆記
+        ar = latest_ar_map.get(h.stock_id)
+        ai_note = latest_ai_map.get(h.stock_id)
 
         # 優先用 v2 SMC 數據，fallback 到 v1
         smc_v2 = _smc_from_db(ar)
@@ -116,15 +155,6 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
             alert = "stop_hit"
         elif stop_loss and current_price and current_price <= stop_loss * 1.03:
             alert = "near_stop"
-
-        # 最新 AI 筆記
-        ai_r = await db.execute(
-            select(AiAnalysisNote)
-            .where(AiAnalysisNote.stock_id == h.stock_id)
-            .order_by(AiAnalysisNote.created_at.desc())
-            .limit(1)
-        )
-        ai_note = ai_r.scalar_one_or_none()
 
         portfolio_items.append({
             "ticker": ticker,
@@ -172,6 +202,26 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
         )
         watch_rows = watch_r.all()
 
+        # ── 批量查詢 v2 推薦的 AI 筆記（避免 N+1） ──
+        v2_stock_ids = [ar.stock_id for ar, _, _, _ in watch_rows]
+        v2_ai_map = {}
+        if v2_stock_ids:
+            v2_ai_subq = (
+                select(AiAnalysisNote.stock_id, func.max(AiAnalysisNote.created_at).label("latest_time"))
+                .where(AiAnalysisNote.stock_id.in_(v2_stock_ids))
+                .group_by(AiAnalysisNote.stock_id)
+                .subquery()
+            )
+            ai_r = await db.execute(
+                select(AiAnalysisNote)
+                .join(v2_ai_subq, and_(
+                    AiAnalysisNote.stock_id == v2_ai_subq.c.stock_id,
+                    AiAnalysisNote.created_at == v2_ai_subq.c.latest_time
+                ))
+            )
+            for ai in ai_r.scalars():
+                v2_ai_map[ai.stock_id] = ai
+
         REC_RANK = {"強力推薦": 4, "推薦": 3, "觀察": 2}
         for ar, ticker, market, name in watch_rows:
             if ticker in holding_tickers:
@@ -181,13 +231,7 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
             if REC_RANK.get(rec, 0) < 2:
                 continue
 
-            ai_r = await db.execute(
-                select(AiAnalysisNote)
-                .where(AiAnalysisNote.stock_id == ar.stock_id)
-                .order_by(AiAnalysisNote.created_at.desc())
-                .limit(1)
-            )
-            ai_note = ai_r.scalar_one_or_none()
+            ai_note = v2_ai_map.get(ar.stock_id)
 
             close = float(ar.close_price) if ar.close_price else None
             entry_price = smc_v2.get("entry_price") if smc_v2 else None
@@ -222,8 +266,30 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
                 .order_by(AnalysisResult.composite_score.desc())
                 .limit(10)
             )
+            v1_watch_rows = v1_watch_r.all()
+
+            # ── 批量查詢 v1 推薦的 AI 筆記（避免 N+1） ──
+            v1_stock_ids = [ar.stock_id for ar, _, _, _ in v1_watch_rows]
+            v1_ai_map = {}
+            if v1_stock_ids:
+                v1_ai_subq = (
+                    select(AiAnalysisNote.stock_id, func.max(AiAnalysisNote.created_at).label("latest_time"))
+                    .where(AiAnalysisNote.stock_id.in_(v1_stock_ids))
+                    .group_by(AiAnalysisNote.stock_id)
+                    .subquery()
+                )
+                ai_r = await db.execute(
+                    select(AiAnalysisNote)
+                    .join(v1_ai_subq, and_(
+                        AiAnalysisNote.stock_id == v1_ai_subq.c.stock_id,
+                        AiAnalysisNote.created_at == v1_ai_subq.c.latest_time
+                    ))
+                )
+                for ai in ai_r.scalars():
+                    v1_ai_map[ai.stock_id] = ai
+
             existing_tickers = {w["ticker"] for w in watchlist}
-            for ar, ticker, market, name in v1_watch_r.all():
+            for ar, ticker, market, name in v1_watch_rows:
                 if ticker in holding_tickers or ticker in existing_tickers:
                     continue
                 entry = _get_entry(ar)
@@ -248,32 +314,70 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
                     break
 
     # ── 4. 大盤指標（優先讀 DB，fallback v1）───────────────
+    # 一次查詢所有市場指標的 Stock 記錄
+    market_tickers = ["SPY", "QQQ", "SOXX"]
+    stock_r = await db.execute(
+        select(Stock).where(Stock.ticker.in_(market_tickers))
+    )
+    market_stocks = {s.ticker: s for s in stock_r.scalars()}
+    market_stock_ids = [s.id for s in market_stocks.values()]
+
+    # ── 批量查詢所有市場指標的最新 AnalysisResult（v2） ──
+    idx_ar_map = {}
+    if market_stock_ids:
+        idx_ar_subq = (
+            select(AnalysisResult.stock_id, func.max(AnalysisResult.analysis_date).label("latest_date"))
+            .where(AnalysisResult.stock_id.in_(market_stock_ids), AnalysisResult.smc_data.isnot(None))
+            .group_by(AnalysisResult.stock_id)
+            .subquery()
+        )
+        idx_ar_r = await db.execute(
+            select(AnalysisResult)
+            .join(idx_ar_subq, and_(
+                AnalysisResult.stock_id == idx_ar_subq.c.stock_id,
+                AnalysisResult.analysis_date == idx_ar_subq.c.latest_date
+            ))
+        )
+        for ar in idx_ar_r.scalars():
+            idx_ar_map[ar.stock_id] = ar
+
+    # ── 批量查詢前一日價格（針對有最新分析的指標） ──
+    # 構造 (stock_id, latest_date) 配對
+    prev_price_map = {}
+    if idx_ar_map:
+        # 對每個股票，查詢比其最新日期更早的前一條記錄
+        # 使用一個統一查詢：取所有 idx_ar_map 中的股票，按日期排序，去掉重複
+        all_idx_ar = list(idx_ar_map.values())
+        prev_ar_r = await db.execute(
+            select(AnalysisResult)
+            .where(AnalysisResult.stock_id.in_(list(idx_ar_map.keys())))
+            .order_by(AnalysisResult.stock_id, desc(AnalysisResult.analysis_date))
+        )
+        all_prev_ars = prev_ar_r.scalars().all()
+
+        # 組織成 {stock_id: [latest_ar, prev_ar, ...]}
+        ar_by_stock = {}
+        for ar in all_prev_ars:
+            if ar.stock_id not in ar_by_stock:
+                ar_by_stock[ar.stock_id] = []
+            ar_by_stock[ar.stock_id].append(ar)
+
+        # 取得前一日價格
+        for stock_id, ars in ar_by_stock.items():
+            if len(ars) > 1:
+                prev_price_map[stock_id] = float(ars[1].close_price) if ars[1].close_price else None
+
     market_indices = {}
-    for idx_ticker in ["SPY", "QQQ", "SOXX"]:
-        idx_r = await db.execute(select(Stock).where(Stock.ticker == idx_ticker))
-        idx_stock = idx_r.scalar_one_or_none()
+    for idx_ticker in market_tickers:
+        idx_stock = market_stocks.get(idx_ticker)
         if not idx_stock:
             continue
 
-        # 先查 v2 數據
-        idx_ar = (await db.execute(
-            select(AnalysisResult)
-            .where(AnalysisResult.stock_id == idx_stock.id, AnalysisResult.smc_data.isnot(None))
-            .order_by(desc(AnalysisResult.analysis_date))
-            .limit(1)
-        )).scalar_one_or_none()
-
+        idx_ar = idx_ar_map.get(idx_stock.id)
         if idx_ar and idx_ar.smc_data:
             trend = idx_ar.smc_data.get("structure", {}).get("trend", "未知")
             close = float(idx_ar.close_price) if idx_ar.close_price else None
-            # 取前一天價格計算漲跌
-            prev_ar = (await db.execute(
-                select(AnalysisResult.close_price)
-                .where(AnalysisResult.stock_id == idx_stock.id, AnalysisResult.analysis_date < idx_ar.analysis_date)
-                .order_by(desc(AnalysisResult.analysis_date))
-                .limit(1)
-            )).scalar_one_or_none()
-            prev = float(prev_ar) if prev_ar else close
+            prev = prev_price_map.get(idx_stock.id, close)
             chg = round((close - prev) / prev * 100, 2) if close and prev else 0
             market_indices[idx_ticker] = {"price": close, "change_pct": chg, "trend": trend, "regime": idx_ar.regime}
         else:
