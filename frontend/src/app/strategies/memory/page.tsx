@@ -103,9 +103,6 @@ export default function StrategyMemoryPage() {
                         <p className="text-sm font-semibold text-slate-800">
                           {pattern.condition}
                         </p>
-                        <p className="text-xs text-slate-600">
-                          {pattern.strategy_combination}
-                        </p>
                       </div>
                       <span
                         className={`text-lg font-bold ${
@@ -121,7 +118,7 @@ export default function StrategyMemoryPage() {
                       平均損失: <span className="font-medium">{pattern.avg_loss_pct.toFixed(2)}%</span>
                     </p>
                     <p className="text-xs font-medium text-slate-700 italic">
-                      "{pattern.warning_message}"
+                      "{pattern.warning}"
                     </p>
                   </div>
                 ))}
@@ -166,10 +163,10 @@ export default function StrategyMemoryPage() {
                         className="border-b border-slate-100 hover:bg-slate-50 transition-colors"
                       >
                         <td className="px-4 py-3 text-slate-700">
-                          {pattern.market_condition}
+                          {pattern.smc_trend}
                         </td>
                         <td className="px-4 py-3 text-slate-700">
-                          {pattern.recommendation_level}
+                          {pattern.recommendation}
                         </td>
                         <td className="px-4 py-3 text-center text-slate-600">
                           {pattern.sample_count}

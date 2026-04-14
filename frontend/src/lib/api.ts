@@ -440,13 +440,13 @@ export type AiNoteLatest = {
 
 // Strategy Memory Types
 export type FailurePattern = {
-  condition: string; strategy_combination: string
+  condition: string
   failure_rate: number; avg_loss_pct: number
-  warning_message: string
+  warning: string
 }
 
 export type StrategyPattern = {
-  market_condition: string; recommendation_level: string
+  smc_trend: string; recommendation: string
   sample_count: number; win_rate: number
   avg_return_pct: number; risk_level: string
 }
