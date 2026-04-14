@@ -46,9 +46,9 @@ async def db_with_test_data():
     """
     import os
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, date as date_type
     from app.database import Base
-    from app.models import Stock, AnalysisResult, AiAnalysisNote, PortfolioHolding
+    from app.models import Stock, AnalysisResult, AiAnalysisNote, PortfolioHolding, User
 
     # 使用實際的 PostgreSQL 連線進行測試
     # 從環境變數讀取，或使用本機 postgres 測試用戶
@@ -69,6 +69,16 @@ async def db_with_test_data():
 
     # 建立測試資料
     async with async_session() as session:
+        # 0. 建立測試用戶（Portfolio 需要 user_id）
+        # ✓ 修正：User 需要 email, password_hash, display_name
+        test_user = User(
+            email="test@example.com",
+            password_hash="hashed_password_123",
+            display_name="Test User"
+        )
+        session.add(test_user)
+        await session.flush()
+
         # 1. 建立股票
         stocks = [
             Stock(ticker="SPY", name="SPDR S&P 500 ETF", market="US"),
@@ -81,26 +91,40 @@ async def db_with_test_data():
         await session.flush()
 
         # 2. 建立分析結果
+        # ✓ 修正：使用實際存在的欄位 (composite_score 代替 momentum_score，recommendation 代替 smc_trend)
         today = datetime.now().date()
         yesterday = today - timedelta(days=1)
 
         analysis_results = [
-            AnalysisResult(stock_id=stocks[0].id, analysis_date=today, smc_trend="上升", momentum_score=75),
-            AnalysisResult(stock_id=stocks[0].id, analysis_date=yesterday, smc_trend="上升", momentum_score=73),
-            AnalysisResult(stock_id=stocks[1].id, analysis_date=today, smc_trend="上升", momentum_score=70),
-            AnalysisResult(stock_id=stocks[1].id, analysis_date=yesterday, smc_trend="盤整", momentum_score=68),
-            AnalysisResult(stock_id=stocks[2].id, analysis_date=today, smc_trend="上升", momentum_score=72),
-            AnalysisResult(stock_id=stocks[2].id, analysis_date=yesterday, smc_trend="上升", momentum_score=71),
-            AnalysisResult(stock_id=stocks[3].id, analysis_date=today, smc_trend="上升", momentum_score=65),
-            AnalysisResult(stock_id=stocks[4].id, analysis_date=today, smc_trend="下降", momentum_score=45),
+            AnalysisResult(stock_id=stocks[0].id, analysis_date=today, composite_score=75.0, recommendation="推薦"),
+            AnalysisResult(stock_id=stocks[0].id, analysis_date=yesterday, composite_score=73.0, recommendation="推薦"),
+            AnalysisResult(stock_id=stocks[1].id, analysis_date=today, composite_score=70.0, recommendation="推薦"),
+            AnalysisResult(stock_id=stocks[1].id, analysis_date=yesterday, composite_score=68.0, recommendation="觀察"),
+            AnalysisResult(stock_id=stocks[2].id, analysis_date=today, composite_score=72.0, recommendation="推薦"),
+            AnalysisResult(stock_id=stocks[2].id, analysis_date=yesterday, composite_score=71.0, recommendation="推薦"),
+            AnalysisResult(stock_id=stocks[3].id, analysis_date=today, composite_score=65.0, recommendation="推薦"),
+            AnalysisResult(stock_id=stocks[4].id, analysis_date=today, composite_score=45.0, recommendation="不推薦"),
         ]
         session.add_all(analysis_results)
         await session.flush()
 
         # 3. 建立持倉
+        # ✓ 修正：shares → total_shares，加入 user_id 和 highest_price
         holdings = [
-            PortfolioHolding(stock_id=stocks[3].id, shares=100, avg_cost=150.50),
-            PortfolioHolding(stock_id=stocks[4].id, shares=50, avg_cost=200.00),
+            PortfolioHolding(
+                user_id=test_user.id,
+                stock_id=stocks[3].id,
+                total_shares=100.0,
+                avg_cost=150.50,
+                highest_price=155.00
+            ),
+            PortfolioHolding(
+                user_id=test_user.id,
+                stock_id=stocks[4].id,
+                total_shares=50.0,
+                avg_cost=200.00,
+                highest_price=210.00
+            ),
         ]
         session.add_all(holdings)
         await session.flush()
@@ -116,9 +140,17 @@ async def db_with_test_data():
 
     # 回傳 session 供測試使用
     async with async_session() as session:
+        # 暴露引擎參考供測試使用（需要同步引擎進行查詢監聽）
+        session._engine = engine
         yield session
 
     # 清理：刪除所有資料
     async with engine.begin() as conn:
+        # ✓ 修正：驗證 DB 名稱，防止意外刪除生產資料庫
+        if not db_url.endswith("_test"):
+            raise RuntimeError(
+                f"Safety check: database URL {db_url} does not end with '_test'. "
+                "Cannot drop_all on non-test databases."
+            )
         await conn.run_sync(Base.metadata.drop_all)
     await engine.dispose()

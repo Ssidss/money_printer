@@ -7,7 +7,7 @@ v2 升級：優先從 DB 的 smc_data/entry_plan JSONB 讀取，不再即時計�
 """
 from datetime import date
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func, desc, and_
+from sqlalchemy import select, func, desc, and_, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
@@ -351,9 +351,11 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
     if idx_ar_map:
         # 對每個股票，查詢最新的 2 筆記錄（latest + previous）
         # 使用 ROW_NUMBER() window function 來實現每個 stock_id 的 LIMIT
-        subq = (
+        # ✓ 修正：使用 tuple comparison 來匹配 (stock_id, analysis_date) 對
+        row_num_subq = (
             select(
-                AnalysisResult,
+                AnalysisResult.stock_id,
+                AnalysisResult.analysis_date,
                 func.row_number()
                 .over(partition_by=AnalysisResult.stock_id,
                       order_by=desc(AnalysisResult.analysis_date))
@@ -364,7 +366,14 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
         )
 
         prev_ar_r = await db.execute(
-            select(subq).where(subq.c.rn <= 2)
+            select(AnalysisResult)
+            .where(
+                tuple_(AnalysisResult.stock_id, AnalysisResult.analysis_date).in_(
+                    select(row_num_subq.c.stock_id, row_num_subq.c.analysis_date)
+                    .where(row_num_subq.c.rn <= 2)
+                )
+            )
+            .order_by(AnalysisResult.stock_id, desc(AnalysisResult.analysis_date))
         )
         all_prev_ars = prev_ar_r.scalars().all()
 

@@ -37,9 +37,13 @@ async def test_briefing_next_open_query_count(db_with_test_data):
     # 呼叫 briefing 邏輯（模擬 next_open_briefing）
     from app.routers.briefing import next_open_briefing
 
-    # 從非同步會話獲取同步引擎進行事件監聽
+    # 從會話取得異步引擎，然後取得同步變體進行事件監聽
+    # ✓ 修正：使用 .sync_engine 而非 .sync_variant（標準 SQLAlchemy 2.0 API）
     from sqlalchemy import event
-    sync_engine = db.get_bind().sync_variant
+
+    # 取得由 fixture 暴露的異步引擎參考
+    async_engine = db._engine
+    sync_engine = async_engine.sync_engine
 
     event.listen(sync_engine, "before_cursor_execute", log_query)
 
