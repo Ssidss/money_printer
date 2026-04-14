@@ -152,11 +152,11 @@ class SMCStrategy(BaseStrategy):
         lows = daily_df["Low"].tolist()
 
         try:
-            from ....schemas.smc import TrendDirection
+            from ...schemas.smc import TrendDirection
             wt = TrendDirection(weekly_trend) if weekly_trend != "unknown" else TrendDirection.INSUFFICIENT
             mt = TrendDirection(monthly_trend) if monthly_trend != "unknown" else TrendDirection.INSUFFICIENT
         except (ValueError, KeyError):
-            from ....schemas.smc import TrendDirection
+            from ...schemas.smc import TrendDirection
             wt = TrendDirection.INSUFFICIENT
             mt = TrendDirection.INSUFFICIENT
 
