@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -18,6 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models.stock import Stock, PriceHistory
 
 logger = logging.getLogger(__name__)
+
+# 台股 symbol 快取 {ticker: (symbol, suffix)}
+_TW_SYMBOL_CACHE: dict[str, tuple[str, str]] = {}
 
 TW_COMPANY_NAMES = {
     # 半導體
@@ -102,16 +104,23 @@ def _fetch_yfinance(symbol: str, start: str, end: str) -> pd.DataFrame | None:
 
 
 def _resolve_tw_symbol(ticker: str) -> tuple[str, str] | None:
-    """找出台股的 yfinance symbol（.TW 或 .TWO）"""
+    """找出台股的 yfinance symbol（.TW 或 .TWO）— 結果快取"""
+    # 檢查快取
+    if ticker in _TW_SYMBOL_CACHE:
+        return _TW_SYMBOL_CACHE[ticker]
+
+    # 嘗試找出正確的 symbol
     for suffix in [".TW", ".TWO"]:
         try:
             symbol = ticker + suffix
             df = yf.Ticker(symbol).history(period="5d")
             if not df.empty:
+                # 快取結果
+                _TW_SYMBOL_CACHE[ticker] = (symbol, suffix)
                 return symbol, suffix
         except Exception:
             pass
-        time.sleep(0.3)
+
     return None
 
 
