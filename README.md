@@ -98,8 +98,9 @@ Layer 5: MTF 對齊
 
 - Python 3.11+
 - Node.js 20+
-- PostgreSQL 15+
 - Conda（建議）或 venv
+
+> **不需要手動安裝 PostgreSQL。** 系統預設會自動啟動內建的 PostgreSQL（資料存放於 `~/.money_printer/pgdata`）。如需連接外部資料庫，請見「進階設定」。
 
 ### 2. Clone 專案
 
@@ -119,32 +120,7 @@ conda activate money_printer
 pip install -r backend/requirements.txt
 ```
 
-### 4. 建立資料庫
-
-```bash
-# 建立 PostgreSQL 資料庫
-createdb money_printer
-
-# 或用 psql
-psql -c "CREATE DATABASE money_printer;"
-```
-
-### 5. 環境變數
-
-在專案根目錄建立 `.env`：
-
-```env
-DATABASE_URL=postgresql+asyncpg://postgres@localhost/money_printer
-
-# （選填）Telegram 通知
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
-
-# （選填）Discord 通知
-DISCORD_WEBHOOK_URL=
-```
-
-### 6. 安裝前端依賴
+### 4. 安裝前端依賴
 
 ```bash
 cd frontend
@@ -152,12 +128,12 @@ npm install
 cd ..
 ```
 
-### 7. 啟動
+### 5. 啟動
 
 開兩個 terminal：
 
 ```bash
-# Terminal 1: 後端
+# Terminal 1: 後端（首次啟動會自動建立 DB + 資料表）
 conda activate money_printer
 python main.py
 
@@ -170,6 +146,38 @@ npm run dev
 - **後端 API**：http://localhost:8000
 - **API 文件**：http://localhost:8000/docs
 - **前端 UI**：http://localhost:3000
+
+> **首次啟動說明**：後端啟動時會自動完成以下步驟：
+> 1. 偵測系統 PostgreSQL，若找不到則啟動內建版本
+> 2. 建立 `money_printer` 資料庫
+> 3. 建立所有資料表並執行遷移
+> 4. 匯入預設股票清單
+
+### 進階設定（選填）
+
+預設情況下不需要任何環境變數。如需自訂，在專案根目錄建立 `.env`：
+
+```env
+# 使用外部 PostgreSQL（設定後不啟動內建 DB）
+DB_HOST=your-db-host
+DB_PORT=5432
+DB_USER=your_user
+DB_PASSWORD=your_password
+DB_NAME=money_printer
+
+# Telegram 通知
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+
+# Discord 通知
+DISCORD_WEBHOOK_URL=
+
+# 生產環境必須設定
+SECRET_KEY=your-secret-key
+ENVIRONMENT=production
+```
+
+> **AUTO_DB 邏輯**：當 `DB_HOST=localhost`、`DB_USER=postgres`、`DB_PASSWORD=`（空）時，系統自動啟動內建 PostgreSQL。設定外部 DB 後即停用 AUTO_DB。
 
 ## 操作指南
 
@@ -271,7 +279,9 @@ K 線圖上會自動標記：
 | `/api/v1/portfolio/sell` | POST | 賣出 |
 | `/api/v1/briefing/morning` | GET | 開盤速報 |
 | `/api/v1/ai-notes` | POST | 儲存 AI 分析筆記 |
-| `/api/v1/ai-notes/{ticker}` | GET | 查看 AI 筆記 |
+| `/api/v1/ai-notes/{ticker}` | GET | 查看 AI 筆記（含勝率追蹤）|
+| `/api/v1/backtest/vbt/run` | POST | 執行 VectorBT 策略回測 |
+| `/api/v1/backtest/vbt/strategies` | GET | 查詢可用回測策略清單 |
 
 ## 自訂股票清單
 
