@@ -95,21 +95,22 @@ class TestPostgreSQLManager:
 
         async def mock_async_test():
             mock_conn = AsyncMock()
-            mock_conn.fetchval = AsyncMock(return_value=None)  # 資料庫不存在
+            mock_conn.fetchval = AsyncMock(side_effect=[None, "'test_db'"])  # 資料庫不存在，然後 quote_ident 返回結果
             mock_conn.execute = AsyncMock()
             mock_conn.close = AsyncMock()
 
-            with patch("app.embedded_postgres.asyncpg.connect", new_callable=AsyncMock) as mock_connect:
+            with patch("asyncpg.connect", new_callable=AsyncMock) as mock_connect:
                 mock_connect.return_value = mock_conn
 
                 await pg_manager.ensure_database_exists("test_db")
 
-                # fetchval 應該被調用來檢查資料庫是否存在
-                mock_conn.fetchval.assert_called_once()
+                # fetchval 應該被調用兩次：一次檢查資料庫，一次 quote_ident
+                assert mock_conn.fetchval.call_count == 2
                 # execute 應該被調用來建立資料庫
                 mock_conn.execute.assert_called_once()
                 call_args = mock_conn.execute.call_args
-                assert "CREATE DATABASE test_db" in call_args[0][0]
+                # 應該使用 quote_ident 的結果，而不是直接插入
+                assert "CREATE DATABASE" in call_args[0][0]
 
         asyncio.run(mock_async_test())
 
@@ -122,12 +123,14 @@ class TestPostgreSQLManager:
             mock_conn.execute = AsyncMock()
             mock_conn.close = AsyncMock()
 
-            with patch("app.embedded_postgres.asyncpg.connect", new_callable=AsyncMock) as mock_connect:
+            with patch("asyncpg.connect", new_callable=AsyncMock) as mock_connect:
                 mock_connect.return_value = mock_conn
 
                 await pg_manager.ensure_database_exists("test_db")
 
-                # execute 不應該被調用
+                # fetchval 應該被調用一次（檢查資料庫是否存在）
+                mock_conn.fetchval.assert_called_once()
+                # execute 不應該被調用（資料庫已存在）
                 mock_conn.execute.assert_not_called()
 
         asyncio.run(mock_async_test())
@@ -143,5 +146,44 @@ class TestPostgreSQLManager:
             # 兩次調用應該返回相同的結果
             assert result1["host"] == result2["host"]
             assert result1["port"] == result2["port"]
+
+        asyncio.run(mock_async_test())
+
+    def test_start_pg_ctl_uses_correct_port_flag(self, pg_manager):
+        """pg_ctl start 應使用 -o "-p PORT" 而非 -p PORT"""
+        pg_manager.pgdata_dir.mkdir(parents=True, exist_ok=True)
+        # 建立 PG_VERSION 檔案，跳過 initdb
+        (pg_manager.pgdata_dir / "PG_VERSION").touch()
+
+        async def mock_async_test():
+            with patch("subprocess.run") as mock_run, \
+                 patch.object(pg_manager, "_wait_for_ready", new_callable=AsyncMock):
+                mock_run.return_value = MagicMock(returncode=0, stdout="server started", stderr="")
+
+                await pg_manager._start_with_pg_ctl()
+
+                # 找出 pg_ctl start 那次呼叫
+                start_call = None
+                for call in mock_run.call_args_list:
+                    if "start" in call[0][0]:
+                        start_call = call
+                        break
+
+                assert start_call is not None, "未找到包含 'start' 的 pg_ctl 呼叫"
+                cmd = start_call[0][0]
+
+                # 正確：應包含 ["-o", "-p 5432"]
+                assert "-o" in cmd, f"命令缺少 '-o' 旗標: {cmd}"
+                o_index = cmd.index("-o")
+                assert o_index + 1 < len(cmd), f"'-o' 後面應該有參數"
+                assert f"-p {pg_manager.db_port}" in cmd[o_index + 1], \
+                    f"'-o' 後面的參數應該包含 '-p {pg_manager.db_port}'，得到: {cmd[o_index + 1]}"
+
+                # 錯誤：不應直接出現 ["-p", "5432"]（作為獨立參數）
+                if "-p" in cmd:
+                    p_index = cmd.index("-p")
+                    # 確認 -p 不是獨立出現，而是在 -o 的參數內
+                    assert p_index == o_index + 1 or cmd[p_index - 1] == "-o", \
+                        f"'-p' 不應直接出現為獨立參數: {cmd}"
 
         asyncio.run(mock_async_test())

@@ -251,7 +251,9 @@ class PostgreSQLManager:
                 )
                 if not exists:
                     logger.info(f"建立資料庫: {db_name}")
-                    await conn.execute(f"CREATE DATABASE {db_name}")
+                    # 使用 quote_ident 防止 SQL Injection
+                    safe_name = await conn.fetchval("SELECT quote_ident($1)", db_name)
+                    await conn.execute(f"CREATE DATABASE {safe_name}")
                 else:
                     logger.info(f"資料庫已存在: {db_name}")
             finally:
