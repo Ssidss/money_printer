@@ -132,8 +132,8 @@ async def fetch_twse_prices(
         若無數據或出錯返回 None
     """
     try:
-        # 驗證 ticker 格式
-        if not ticker or not ticker.isdigit() or len(ticker) != 4:
+        # 驗證 ticker 格式（允許 4-6 位數字，以支援 ETF 如 00919）
+        if not ticker or not ticker.isdigit() or not (4 <= len(ticker) <= 6):
             logger.warning(f"無效的台股代碼: {ticker}")
             return None
 

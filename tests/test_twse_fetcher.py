@@ -327,3 +327,41 @@ class TestFetchTwsePrices:
 
             # 應該在重試後成功
             assert result is not None or result is None  # 取決於實現方式
+
+    @pytest.mark.asyncio
+    async def test_fetch_twse_prices_5digit_etf_code(self):
+        """測試 5 位數 ETF 代碼（如 00919）驗證通過"""
+        mock_response_data = {
+            "msgArray": [
+                {
+                    "n": "00919",
+                    "z": "群益台灣精選高息",
+                    "tlong": "20240415",
+                    "o": "20.00",
+                    "h": "20.50",
+                    "l": "19.80",
+                    "d": "20.30",
+                    "v": "1000000"
+                }
+            ]
+        }
+
+        mock_response_obj = MagicMock()
+        mock_response_obj.raise_for_status = MagicMock()
+        mock_response_obj.json = MagicMock(return_value=mock_response_data)
+
+        mock_client = AsyncMock()
+        async def async_get(*args, **kwargs):
+            return mock_response_obj
+
+        mock_client.get = async_get
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch('app.services.twse_fetcher.httpx.AsyncClient', return_value=mock_client):
+            result = await fetch_twse_prices("00919", date(2024, 4, 15), date(2024, 4, 15))
+
+            assert result is not None
+            assert isinstance(result, pd.DataFrame)
+            assert not result.empty
+            assert result.iloc[0]["Close"] == 20.30

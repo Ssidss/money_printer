@@ -161,6 +161,7 @@ async def fetch_and_store_prices(
             return 0
         start_str = start_date.strftime("%Y-%m-%d")
     else:
+        start_date = desired_start
         start_str = desired_start.strftime("%Y-%m-%d")
 
     end_str = date.today().strftime("%Y-%m-%d")
