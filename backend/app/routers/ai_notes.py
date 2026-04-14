@@ -164,45 +164,7 @@ async def get_latest_notes(db: AsyncSession = Depends(get_db)):
     }
 
 
-@router.get("/{note_id}")
-async def get_ai_note(note_id: int, db: AsyncSession = Depends(get_db)):
-    """取得單筆 AI 分析筆記"""
-    result = await db.execute(
-        select(AiAnalysisNote, Stock.ticker)
-        .join(Stock)
-        .where(AiAnalysisNote.id == note_id)
-    )
-    row = result.one_or_none()
-    if not row:
-        raise HTTPException(404, f"筆記 #{note_id} 不存在")
-    note, ticker = row
-    return _note_to_dict(note, ticker)
-
-
-@router.patch("/{note_id}/outcome")
-async def update_ai_note_outcome(
-    note_id: int,
-    body: AiNoteUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    """更新 AI 分析筆記的交易結果"""
-    result = await db.execute(select(AiAnalysisNote).where(AiAnalysisNote.id == note_id))
-    note = result.scalar_one_or_none()
-    if not note:
-        raise HTTPException(404, f"筆記 #{note_id} 不存在")
-
-    note.outcome_status = body.outcome_status
-    note.actual_return_pct = body.actual_return_pct
-    note.closed_price = body.closed_price
-    note.closed_at = body.closed_at
-
-    await db.commit()
-    await db.refresh(note)
-    return {
-        "message": f"筆記 #{note_id} 交易結果已更新",
-        "outcome_status": note.outcome_status,
-        "actual_return_pct": float(note.actual_return_pct) if note.actual_return_pct else None,
-    }
+# ── 具體路由 (KINA-264: 必須在通用路由 /{note_id} 之前定義) ──────────────
 
 
 @router.post("/backfill-results")
@@ -309,6 +271,50 @@ async def get_ai_notes_performance(db: AsyncSession = Depends(get_db)):
             "hit_stop": hits_stop,
             "expired": expired,
         }
+    }
+
+
+# ── 通用路由（參數路由） ───────────────────────────────────────
+
+
+@router.get("/{note_id}")
+async def get_ai_note(note_id: int, db: AsyncSession = Depends(get_db)):
+    """取得單筆 AI 分析筆記"""
+    result = await db.execute(
+        select(AiAnalysisNote, Stock.ticker)
+        .join(Stock)
+        .where(AiAnalysisNote.id == note_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(404, f"筆記 #{note_id} 不存在")
+    note, ticker = row
+    return _note_to_dict(note, ticker)
+
+
+@router.patch("/{note_id}/outcome")
+async def update_ai_note_outcome(
+    note_id: int,
+    body: AiNoteUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """更新 AI 分析筆記的交易結果"""
+    result = await db.execute(select(AiAnalysisNote).where(AiAnalysisNote.id == note_id))
+    note = result.scalar_one_or_none()
+    if not note:
+        raise HTTPException(404, f"筆記 #{note_id} 不存在")
+
+    note.outcome_status = body.outcome_status
+    note.actual_return_pct = body.actual_return_pct
+    note.closed_price = body.closed_price
+    note.closed_at = body.closed_at
+
+    await db.commit()
+    await db.refresh(note)
+    return {
+        "message": f"筆記 #{note_id} 交易結果已更新",
+        "outcome_status": note.outcome_status,
+        "actual_return_pct": float(note.actual_return_pct) if note.actual_return_pct else None,
     }
 
 
