@@ -26,11 +26,11 @@ async def test_strategy_memory_empty_data(db_with_test_data):
     result = await get_strategy_memory(session)
 
     # 空資料時應該回傳合理預設值
-    assert result["total_analyzed"] == 0
-    assert result["patterns"] == []
-    assert result["top_failure_patterns"] == []
-    assert result["summary"]["best_condition"] is None
-    assert result["summary"]["worst_condition"] is None
+    assert result.total_analyzed == 0
+    assert result.patterns == []
+    assert result.top_failure_patterns == []
+    assert result.summary.best_condition is None
+    assert result.summary.worst_condition is None
 
 
 @pytest.mark.asyncio
@@ -78,15 +78,15 @@ async def test_strategy_memory_single_pattern(db_with_test_data):
     # 獲取策略記憶
     memory = await get_strategy_memory(session)
 
-    assert memory["total_analyzed"] == 10
-    assert len(memory["patterns"]) == 1
+    assert memory.total_analyzed == 10
+    assert len(memory.patterns) == 1
 
-    pattern = memory["patterns"][0]
-    assert pattern["smc_trend"] == "上升趨勢"
-    assert pattern["recommendation"] == "推薦"
-    assert pattern["sample_count"] == 10
-    assert pattern["win_rate"] == 0.6  # 6/10
-    assert pattern["risk_level"] == "medium"  # win_rate between 0.4 and 0.6
+    pattern = memory.patterns[0]
+    assert pattern.smc_trend == "上升趨勢"
+    assert pattern.recommendation == "推薦"
+    assert pattern.sample_count == 10
+    assert pattern.win_rate == 0.6  # 6/10
+    assert pattern.risk_level == "medium"  # win_rate between 0.4 and 0.6
 
 
 @pytest.mark.asyncio
@@ -194,23 +194,23 @@ async def test_strategy_memory_multiple_patterns(db_with_test_data):
 
     memory = await get_strategy_memory(session)
 
-    assert memory["total_analyzed"] == 20
-    assert len(memory["patterns"]) == 3
+    assert memory.total_analyzed == 20
+    assert len(memory.patterns) == 3
 
     # 驗證風險等級
     pattern_map = {
-        (p["smc_trend"], p["recommendation"]): p
-        for p in memory["patterns"]
+        (p.smc_trend, p.recommendation): p
+        for p in memory.patterns
     }
 
     # 上升 + 推薦: win_rate = 0.8 → low risk
-    assert pattern_map[("上升趨勢", "推薦")]["risk_level"] == "low"
+    assert pattern_map[("上升趨勢", "推薦")].risk_level == "low"
 
     # 盤整 + 強力推薦: win_rate = 0.3 → high risk
-    assert pattern_map[("盤整", "強力推薦")]["risk_level"] == "high"
+    assert pattern_map[("盤整", "強力推薦")].risk_level == "high"
 
     # 下降 + 觀察: win_rate = 0.4 → high risk (邊界 < 0.4)
-    assert pattern_map[("下降趨勢", "觀察")]["risk_level"] == "high"
+    assert pattern_map[("下降趨勢", "觀察")].risk_level == "high"
 
 
 @pytest.mark.asyncio
@@ -288,13 +288,13 @@ async def test_strategy_memory_top_failure_patterns(db_with_test_data):
     memory = await get_strategy_memory(session)
 
     # 只有失敗率 > 50% 的組合會出現在 top_failure_patterns
-    assert len(memory["top_failure_patterns"]) == 1
+    assert len(memory.top_failure_patterns) == 1
 
-    failure_pattern = memory["top_failure_patterns"][0]
-    assert failure_pattern["condition"] == "盤整 + 強力推薦"
-    assert failure_pattern["failure_rate"] == 0.8
-    assert failure_pattern["avg_loss_pct"] == -5.2
-    assert "warning" in failure_pattern
+    failure_pattern = memory.top_failure_patterns[0]
+    assert failure_pattern.condition == "盤整 + 強力推薦"
+    assert failure_pattern.failure_rate == 0.8
+    assert failure_pattern.avg_loss_pct == -5.2
+    assert failure_pattern.warning is not None
 
 
 @pytest.mark.asyncio
@@ -371,9 +371,9 @@ async def test_strategy_memory_summary(db_with_test_data):
 
     memory = await get_strategy_memory(session)
 
-    summary = memory["summary"]
-    assert summary["best_condition"] == "上升趨勢 + 推薦"
-    assert summary["worst_condition"] == "盤整 + 強力推薦"
+    summary = memory.summary
+    assert summary.best_condition == "上升趨勢 + 推薦"
+    assert summary.worst_condition == "盤整 + 強力推薦"
 
 
 @pytest.mark.asyncio
@@ -416,9 +416,9 @@ async def test_strategy_memory_ignore_pending_notes(db_with_test_data):
     memory = await get_strategy_memory(session)
 
     # 只應該統計 1 個（completed）
-    assert memory["total_analyzed"] == 1
-    assert len(memory["patterns"]) == 1
-    assert memory["patterns"][0]["sample_count"] == 1
+    assert memory.total_analyzed == 1
+    assert len(memory.patterns) == 1
+    assert memory.patterns[0].sample_count == 1
 
 
 @pytest.mark.asyncio
@@ -451,4 +451,4 @@ async def test_strategy_memory_limit_failure_patterns(db_with_test_data):
     memory = await get_strategy_memory(session)
 
     # 應該最多返回 5 筆
-    assert len(memory["top_failure_patterns"]) <= 5
+    assert len(memory.top_failure_patterns) <= 5

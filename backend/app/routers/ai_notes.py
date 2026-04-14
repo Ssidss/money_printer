@@ -280,7 +280,7 @@ async def trigger_backfill_results(db: AsyncSession = Depends(get_db)):
     }
 
 
-async def get_strategy_memory(db: AsyncSession = Depends(get_db)) -> StrategyMemoryResponse:
+async def get_strategy_memory(db: AsyncSession) -> StrategyMemoryResponse:
     """
     (Internal function) 策略失誤分析和記憶摘要結構
 
@@ -307,9 +307,12 @@ async def get_strategy_memory(db: AsyncSession = Depends(get_db)) -> StrategyMem
             summary=StrategySummary(best_condition=None, worst_condition=None)
         )
 
-    # 按 (smc_trend, recommendation) 分組
+    # 按 (smc_trend, recommendation) 分組，過濾掉 None 值
     pattern_groups: dict = {}
     for note in notes:
+        # 跳過 smc_trend 或 recommendation 為 None 的筆記
+        if note.smc_trend is None or note.recommendation is None:
+            continue
         key = (note.smc_trend, note.recommendation)
         if key not in pattern_groups:
             pattern_groups[key] = []
@@ -329,9 +332,12 @@ async def get_strategy_memory(db: AsyncSession = Depends(get_db)) -> StrategyMem
         avg_return_pct = sum(returns) / len(returns) if returns else 0.0
 
         # 判定風險等級
-        if win_rate < 0.4:
+        # win_rate <= 0.4: high (包括邊界 0.4)
+        # 0.4 < win_rate <= 0.6: medium
+        # win_rate > 0.6: low
+        if win_rate <= 0.4:
             risk_level = "high"
-        elif win_rate < 0.6:
+        elif win_rate <= 0.6:
             risk_level = "medium"
         else:
             risk_level = "low"
@@ -427,9 +433,12 @@ async def get_memory_context(
             context_summary="暫無歷史數據，無法提供記憶 context"
         )
 
-    # 按 (smc_trend, recommendation) 分組
+    # 按 (smc_trend, recommendation) 分組，過濾掉 None 值
     pattern_groups: dict = {}
     for note in notes:
+        # 跳過 smc_trend 或 recommendation 為 None 的筆記
+        if note.smc_trend is None or note.recommendation is None:
+            continue
         key = (note.smc_trend, note.recommendation)
         if key not in pattern_groups:
             pattern_groups[key] = []
