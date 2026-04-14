@@ -20,6 +20,13 @@ const ACTION_BADGE: Record<string, string> = {
   "觀望": "bg-slate-100 text-slate-500",
 }
 
+const OUTCOME_BADGE: Record<string, string> = {
+  "盈利": "bg-green-100 text-green-700 border-green-200",
+  "虧損": "bg-red-100 text-red-700 border-red-200",
+  "進行中": "bg-blue-100 text-blue-700 border-blue-200",
+  "pending": "bg-slate-100 text-slate-500 border-slate-200",
+}
+
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime()
   const mins = Math.floor(diff / 60000)
@@ -117,6 +124,11 @@ export function AiNotes({ ticker }: { ticker: string }) {
                       {note.action}
                     </span>
                   )}
+                  {note.outcome_status && (
+                    <span className={`text-xs px-2 py-0.5 rounded border font-medium ${OUTCOME_BADGE[note.outcome_status] ?? "bg-slate-100 text-slate-500 border-slate-200"}`}>
+                      {note.outcome_status}
+                    </span>
+                  )}
                   {note.smc_trend && (
                     <span className="text-xs text-slate-400">{note.smc_trend}</span>
                   )}
@@ -126,6 +138,11 @@ export function AiNotes({ ticker }: { ticker: string }) {
                   {note.price_at_analysis && (
                     <span className="text-xs text-slate-500">
                       分析時價 <span className="font-medium text-slate-700">${note.price_at_analysis.toFixed(2)}</span>
+                    </span>
+                  )}
+                  {note.actual_return_pct != null && (
+                    <span className={`text-xs font-bold ${note.actual_return_pct >= 0 ? "text-green-600" : "text-red-600"}`}>
+                      {note.actual_return_pct >= 0 ? "+" : ""}{note.actual_return_pct.toFixed(2)}%
                     </span>
                   )}
                   {note.rr_ratio && (
@@ -164,6 +181,45 @@ export function AiNotes({ ticker }: { ticker: string }) {
                         <p className="text-sm font-bold text-green-600">${note.target_price.toFixed(2)}</p>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Result summary */}
+                {(note.closed_price != null || note.actual_return_pct != null || note.outcome_status) && (
+                  <div className="mt-3 mb-3 rounded-lg bg-slate-50 border border-slate-100 p-3">
+                    <p className="text-xs font-semibold text-slate-600 mb-2">交易結果</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {note.closed_price != null && (
+                        <div className="text-center">
+                          <p className="text-xs text-slate-400">結算價</p>
+                          <p className="text-sm font-bold text-slate-700">${note.closed_price.toFixed(2)}</p>
+                          {note.closed_at && (
+                            <p className="text-xs text-slate-400 mt-0.5">{new Date(note.closed_at).toLocaleDateString("zh-TW")}</p>
+                          )}
+                        </div>
+                      )}
+                      {note.actual_return_pct != null && (
+                        <div className="text-center">
+                          <p className="text-xs text-slate-400">報酬率</p>
+                          <p className={`text-sm font-bold ${note.actual_return_pct >= 0 ? "text-green-600" : "text-red-600"}`}>
+                            {note.actual_return_pct >= 0 ? "+" : ""}{note.actual_return_pct.toFixed(2)}%
+                          </p>
+                        </div>
+                      )}
+                      {note.outcome_status && (
+                        <div className="text-center">
+                          <p className="text-xs text-slate-400">狀態</p>
+                          <p className={`text-sm font-bold px-2 py-1 rounded ${
+                            note.outcome_status === "盈利" ? "text-green-600 bg-green-50" :
+                            note.outcome_status === "虧損" ? "text-red-600 bg-red-50" :
+                            note.outcome_status === "進行中" ? "text-blue-600 bg-blue-50" :
+                            "text-slate-600 bg-slate-100"
+                          }`}>
+                            {note.outcome_status}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
