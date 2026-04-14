@@ -48,17 +48,14 @@ async def _init_stocks(db):
 
 async def _run_migrations():
     """執行所有資料庫遷移"""
-    try:
-        # 動態導入遷移模組
-        backend_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if backend_path not in sys.path:
-            sys.path.insert(0, backend_path)
+    # 動態導入遷移模組
+    backend_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if backend_path not in sys.path:
+        sys.path.insert(0, backend_path)
 
-        from migrate_kina260_ai_notes_results import migrate as migrate_kina260
-        await migrate_kina260()
-        logger.info("✓ 遷移 KINA-260 完成")
-    except Exception as e:
-        logger.warning(f"遷移執行失敗或已完成（非首次運行）: {e}")
+    from migrate_kina260_ai_notes_results import migrate as migrate_kina260
+    await migrate_kina260()
+    logger.info("✓ 遷移 KINA-260 完成")
 
 
 @asynccontextmanager
