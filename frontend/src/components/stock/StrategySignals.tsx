@@ -199,12 +199,20 @@ export function StrategySignals({ ticker }: { ticker: string }) {
 
   // Only include fast strategies by default (exclude smc_v2 from auto-load)
   const fastStrategies = strategiesToQuery.filter(s => s !== "smc_v2")
-  const queryStr = fastStrategies.length > 0 ? fastStrategies.join(",") : "explosion_scanner,momentum_breakout"
+  const hasQueryableStrategy = fastStrategies.length > 0
+  const queryStr = fastStrategies.join(",")
 
   useEffect(() => {
+    if (!hasQueryableStrategy) {
+      return
+    }
+
     let cancelled = false
-    setLoading(true)
-    setError(null)
+    queueMicrotask(() => {
+      if (cancelled) return
+      setLoading(true)
+      setError(null)
+    })
 
     api.liveSignals(ticker, queryStr)
       .then(r => { if (!cancelled) setData(r) })
@@ -212,7 +220,7 @@ export function StrategySignals({ ticker }: { ticker: string }) {
       .finally(() => { if (!cancelled) setLoading(false) })
 
     return () => { cancelled = true }
-  }, [ticker, queryStr])
+  }, [ticker, queryStr, hasQueryableStrategy])
 
   if (loading) {
     return (
@@ -231,6 +239,17 @@ export function StrategySignals({ ticker }: { ticker: string }) {
       <div className="rounded-xl border border-red-200 bg-white p-5 shadow-sm">
         <h3 className="text-sm font-semibold text-slate-700 mb-2">V3 Strategy Signals</h3>
         <p className="text-xs text-red-500">{error}</p>
+      </div>
+    )
+  }
+
+  if (!hasQueryableStrategy) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-slate-700 mb-2">V3 Strategy Signals</h3>
+        <p className="text-xs text-slate-500">
+          目前只選到 SMC v2。SMC 不提供此區塊的即時快算，請到「策略回測」啟動 V3 配置後查看。
+        </p>
       </div>
     )
   }

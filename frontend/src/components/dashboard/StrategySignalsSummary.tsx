@@ -42,12 +42,15 @@ export function StrategySignalsSummary() {
     async function load() {
       setLoading(true)
       try {
-        // 只跑 explosion + momentum（SMC 太慢不適合 batch）
+        // 只跑 explosion + momentum（SMC 不做即時 batch）
         const strategies = ["explosion_scanner", "momentum_breakout"].filter(
           s => selectedStrategies.includes(s)
         )
-        // 如果策略面板只選了 SMC，還是跑 explosion 作為預設
-        if (strategies.length === 0) strategies.push("explosion_scanner")
+        // 如果只選了 SMC，回傳空列表，避免顯示錯誤策略來源
+        if (strategies.length === 0) {
+          setSignals([])
+          return
+        }
 
         const results = await Promise.allSettled(
           strategies.flatMap(s => [
@@ -115,7 +118,9 @@ export function StrategySignalsSummary() {
               </span>
             </>
           ) : (
-            "Explosion + Momentum (US+TW 即時)"
+            selectedStrategies.some(s => s === "explosion_scanner" || s === "momentum_breakout")
+              ? "Explosion + Momentum (US+TW 即時)"
+              : "僅選 SMC v2（請先在策略回測頁啟動 V3 配置）"
           )}
         </span>
       </div>

@@ -76,26 +76,33 @@ type Props = {
 export function HoldingsSection({ priceMap, priceDateMap, marketStatus, trendsMTF }: Props) {
   const { user } = useAuth()
   const [holdings, setHoldings] = useState<Holding[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (!user) {
-      setHoldings([])
-      setLoading(false)
-      return
-    }
+    if (!user) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) setLoading(true)
+    })
     api.holdings()
-      .then(setHoldings)
-      .catch(() => setHoldings([]))
-      .finally(() => setLoading(false))
+      .then((rows) => {
+        if (!cancelled) setHoldings(rows)
+      })
+      .catch(() => {
+        if (!cancelled) setHoldings([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
   }, [user])
 
-  if (loading) return null
   if (!user) return (
     <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-slate-400">
       請先<Link href="/login" className="text-indigo-600 hover:underline mx-1">登入</Link>以查看持倉
     </div>
   )
+  if (loading) return null
   if (holdings.length === 0) return null
 
   return (

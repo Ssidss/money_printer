@@ -37,7 +37,7 @@ export default function ScannerPage() {
   useEffect(() => {
     if (!scanning) return
     const es = new EventSource(SSE_URL)
-    es.onmessage = (e) => {
+    const onProgress = (e: MessageEvent) => {
       try {
         const msg = JSON.parse(e.data)
         setProgress(msg.message || "")
@@ -47,6 +47,7 @@ export default function ScannerPage() {
         }
       } catch { /* ignore */ }
     }
+    es.addEventListener("progress", onProgress)
     return () => es.close()
   }, [scanning, loadLatest])
 

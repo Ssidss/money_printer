@@ -40,11 +40,12 @@ class SSEManager:
         q = self._new_queue()
         try:
             while True:
-                msg = await asyncio.wait_for(q.get(), timeout=30)
-                yield msg
-        except asyncio.TimeoutError:
-            # 定期發送 keepalive
-            yield ": keepalive\n\n"
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=30)
+                    yield msg
+                except asyncio.TimeoutError:
+                    # 定期發送 keepalive，維持連線但不中斷訂閱
+                    yield ": keepalive\n\n"
         except asyncio.CancelledError:
             pass
         finally:

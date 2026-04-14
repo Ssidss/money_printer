@@ -1,29 +1,18 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { api } from "@/lib/api"
 import { useSSE } from "@/hooks/useSSE"
 
 export function BatchFetchButton() {
   const { progress, isRunning: sseRunning } = useSSE()
-  const [running, setRunning] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
 
   // track batch_fetch phase from SSE
-  const isFetching = running || (progress?.phase === "batch_fetch")
-  const isDone = progress?.phase === "done" && running
-
-  useEffect(() => {
-    if (isDone) setRunning(false)
-  }, [isDone])
+  const isFetching = sseRunning || (progress?.phase === "batch_fetch")
 
   const trigger = async (backfill: boolean) => {
-    setRunning(true)
     setShowMenu(false)
-    try {
-      await api.batchFetch(7, backfill)
-    } catch {
-      setRunning(false)
-    }
+    await api.batchFetch(7, backfill)
   }
 
   return (

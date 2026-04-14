@@ -3,6 +3,8 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+import time
+import asyncio
 
 from ..database import get_db, AsyncSessionLocal
 from ..models.stock import Stock, PriceHistory
@@ -14,6 +16,11 @@ from ..sse.manager import emit_progress
 from .analysis import _get_entry
 
 router = APIRouter(prefix="/stocks", tags=["stocks"])
+
+# ── Lightweight in-memory cache ─────────────────────────
+_SMC_TRENDS_TTL_SEC = 60
+_smc_trends_cache: tuple[float, dict] | None = None
+_smc_trends_lock = asyncio.Lock()
 
 
 @router.get("")
@@ -29,75 +36,84 @@ async def get_smc_trends(db: AsyncSession = Depends(get_db)):
 
     優先讀 DB 中的 smc_data JSONB（v2），fallback 到即時計算（v1）。
     """
-    result = await db.execute(select(Stock).where(Stock.is_active == True))
-    stocks = result.scalars().all()
-    stock_map = {s.id: s for s in stocks}
+    global _smc_trends_cache
+    now = time.time()
+    if _smc_trends_cache and _smc_trends_cache[0] > now:
+        return _smc_trends_cache[1]
 
-    # 批次查最新有 smc_data 的分析（PostgreSQL DISTINCT ON，避免 N+1）
-    from sqlalchemy import text
-    latest_smc_q = await db.execute(
-        select(AnalysisResult)
-        .where(
-            AnalysisResult.stock_id.in_([s.id for s in stocks]),
-            AnalysisResult.smc_data.isnot(None),
+    async with _smc_trends_lock:
+        now = time.time()
+        if _smc_trends_cache and _smc_trends_cache[0] > now:
+            return _smc_trends_cache[1]
+
+        result = await db.execute(select(Stock).where(Stock.is_active == True))
+        stocks = result.scalars().all()
+
+        # 批次查最新有 smc_data 的分析（先依 stock_id/date 排序，Python 取每檔最新）
+        latest_smc_q = await db.execute(
+            select(AnalysisResult)
+            .where(
+                AnalysisResult.stock_id.in_([s.id for s in stocks]),
+                AnalysisResult.smc_data.isnot(None),
+            )
+            .order_by(AnalysisResult.stock_id, AnalysisResult.analysis_date.desc())
         )
-        .order_by(AnalysisResult.stock_id, AnalysisResult.analysis_date.desc())
-    )
-    # 手動取每個 stock_id 的最新一筆
-    smc_by_stock: dict[int, AnalysisResult] = {}
-    for ar in latest_smc_q.scalars().all():
-        if ar.stock_id not in smc_by_stock:
-            smc_by_stock[ar.stock_id] = ar
+        smc_by_stock: dict[int, AnalysisResult] = {}
+        for ar in latest_smc_q.scalars().all():
+            if ar.stock_id not in smc_by_stock:
+                smc_by_stock[ar.stock_id] = ar
 
-    trends: dict[str, dict | str] = {}
-    for stock in stocks:
-        ar = smc_by_stock.get(stock.id)
-        if ar and ar.smc_data:
-            smc = ar.smc_data
-            ep = ar.entry_plan or {}
-            mtf = ep.get("mtf", {})
-            trends[stock.ticker] = {
-                "daily": smc.get("structure", {}).get("trend", "未知"),
-                "weekly": mtf.get("weekly_trend", "未知"),
-                "monthly": mtf.get("monthly_trend", "未知"),
-                "regime": ar.regime,
-                "recommendation": ep.get("recommendation"),
-                "action": ep.get("action"),
-                "rr_ratio": ep.get("rr_ratio"),
-                "source": "v2",
-            }
-        else:
-            # Fallback: v1 即時計算
-            df = await load_price_df(db, stock.id, limit=1260)
-            if df is None:
-                trends[stock.ticker] = "未知"
-                continue
-            try:
-                struct = find_structure(df)
-                daily_trend = struct.get("trend", "未知")
-                weekly_trend = "未知"
-                monthly_trend = "未知"
-                try:
-                    df_w = resample_to_weekly(df)
-                    if len(df_w) >= 20:
-                        weekly_trend = find_structure(df_w).get("trend", "未知")
-                except Exception:
-                    pass
-                try:
-                    df_m = resample_to_monthly(df)
-                    if len(df_m) >= 12:
-                        monthly_trend = find_structure(df_m).get("trend", "未知")
-                except Exception:
-                    pass
+        trends: dict[str, dict | str] = {}
+        for stock in stocks:
+            ar = smc_by_stock.get(stock.id)
+            if ar and ar.smc_data:
+                smc = ar.smc_data
+                ep = ar.entry_plan or {}
+                mtf = ep.get("mtf", {})
                 trends[stock.ticker] = {
-                    "daily": daily_trend,
-                    "weekly": weekly_trend,
-                    "monthly": monthly_trend,
-                    "source": "v1",
+                    "daily": smc.get("structure", {}).get("trend", "未知"),
+                    "weekly": mtf.get("weekly_trend", "未知"),
+                    "monthly": mtf.get("monthly_trend", "未知"),
+                    "regime": ar.regime,
+                    "recommendation": ep.get("recommendation"),
+                    "action": ep.get("action"),
+                    "rr_ratio": ep.get("rr_ratio"),
+                    "source": "v2",
                 }
-            except Exception:
-                trends[stock.ticker] = "未知"
-    return trends
+            else:
+                # Fallback: v1 即時計算
+                df = await load_price_df(db, stock.id, limit=1260)
+                if df is None:
+                    trends[stock.ticker] = "未知"
+                    continue
+                try:
+                    struct = find_structure(df)
+                    daily_trend = struct.get("trend", "未知")
+                    weekly_trend = "未知"
+                    monthly_trend = "未知"
+                    try:
+                        df_w = resample_to_weekly(df)
+                        if len(df_w) >= 20:
+                            weekly_trend = find_structure(df_w).get("trend", "未知")
+                    except Exception:
+                        pass
+                    try:
+                        df_m = resample_to_monthly(df)
+                        if len(df_m) >= 12:
+                            monthly_trend = find_structure(df_m).get("trend", "未知")
+                    except Exception:
+                        pass
+                    trends[stock.ticker] = {
+                        "daily": daily_trend,
+                        "weekly": weekly_trend,
+                        "monthly": monthly_trend,
+                        "source": "v1",
+                    }
+                except Exception:
+                    trends[stock.ticker] = "未知"
+
+        _smc_trends_cache = (time.time() + _SMC_TRENDS_TTL_SEC, trends)
+        return trends
 
 
 @router.get("/latest-prices")

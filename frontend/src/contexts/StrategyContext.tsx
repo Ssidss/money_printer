@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react"
 import { api } from "@/lib/api"
-import type { V3ActiveConfig, V3ActiveSignals, BatchSignalResult } from "@/lib/api"
+import type { V3ActiveConfig, BatchSignalResult } from "@/lib/api"
 
 // ── Strategy definitions ────────────────────────────────
 export type StrategyDef = {
@@ -142,60 +142,52 @@ function buildSignalMap(signals: BatchSignalResult[]): Record<string, BatchSigna
 }
 
 export function StrategyProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeRaw] = useState<StrategyMode>("single")
-  const [selectedStrategies, setSelected] = useState<string[]>(["explosion_scanner"])
-  const [primaryStrategy, setPrimaryRaw] = useState<string>("explosion_scanner")
+  const initialSaved = useMemo(() => loadState(), [])
+  const [mode, setModeRaw] = useState<StrategyMode>(initialSaved.mode ?? "single")
+  const [selectedStrategies, setSelected] = useState<string[]>(initialSaved.selectedStrategies?.length ? initialSaved.selectedStrategies : ["explosion_scanner"])
+  const [primaryStrategy, setPrimaryRaw] = useState<string>(initialSaved.primaryStrategy ?? "explosion_scanner")
   const [panelOpen, setPanelOpen] = useState(false)
-  const [registry, setRegistry] = useState<StrategyDef[]>(STRATEGY_REGISTRY)
-  const [hydrated, setHydrated] = useState(false)
-  const [v3, setV3] = useState<V3ActivationState>(V3_INITIAL)
+  const [registry, setRegistry] = useState<StrategyDef[]>(() =>
+    STRATEGY_REGISTRY.map((s) => ({
+      ...s,
+      metrics: initialSaved.metricsMap?.[s.id] ?? s.metrics,
+    }))
+  )
+  const [v3, setV3] = useState<V3ActivationState>(() =>
+    initialSaved.v3Config
+      ? { ...V3_INITIAL, active: true, config: initialSaved.v3Config, loading: true }
+      : V3_INITIAL
+  )
 
-  // Hydrate from localStorage on mount
+  // Restore V3 active config — fetch signals from backend if was active
   useEffect(() => {
-    const saved = loadState()
-    if (saved.mode) setModeRaw(saved.mode)
-    if (saved.selectedStrategies?.length) setSelected(saved.selectedStrategies)
-    if (saved.primaryStrategy) setPrimaryRaw(saved.primaryStrategy)
-    if (saved.metricsMap) {
-      setRegistry((prev) =>
-        prev.map((s) => ({
-          ...s,
-          metrics: saved.metricsMap?.[s.id] ?? s.metrics,
-        }))
-      )
-    }
-    // Restore V3 active config — fetch signals from backend if was active
-    if (saved.v3Config) {
-      setV3(prev => ({ ...prev, active: true, config: saved.v3Config!, loading: true }))
-      api.backtestV3ActiveSignals()
-        .then((res) => {
-          setV3({
-            active: true,
-            config: res.config,
-            signals: res.results,
-            signalMap: buildSignalMap(res.results),
-            buyCount: res.buy_count,
-            loading: false,
-            dataDate: res.data_date,
-          })
+    if (!initialSaved.v3Config) return
+    api.backtestV3ActiveSignals()
+      .then((res) => {
+        setV3({
+          active: true,
+          config: res.config,
+          signals: res.results,
+          signalMap: buildSignalMap(res.results),
+          buyCount: res.buy_count,
+          loading: false,
+          dataDate: res.data_date,
         })
-        .catch(() => {
-          // Backend lost state — deactivate
-          setV3(V3_INITIAL)
-        })
-    }
-    setHydrated(true)
-  }, [])
+      })
+      .catch(() => {
+        // Backend lost state — deactivate
+        setV3(V3_INITIAL)
+      })
+  }, [initialSaved.v3Config])
 
-  // Persist on change (after hydration)
+  // Persist on change
   useEffect(() => {
-    if (!hydrated) return
     const metricsMap: Record<string, StrategyDef["metrics"]> = {}
     registry.forEach((s) => {
       if (s.metrics) metricsMap[s.id] = s.metrics
     })
     saveState({ mode, selectedStrategies, primaryStrategy, metricsMap, v3Config: v3.config })
-  }, [mode, selectedStrategies, primaryStrategy, registry, hydrated, v3.config])
+  }, [mode, selectedStrategies, primaryStrategy, registry, v3.config])
 
   // ── Actions ───────────────────────────────────────────
   const setPrimaryStrategy = useCallback((id: string) => {

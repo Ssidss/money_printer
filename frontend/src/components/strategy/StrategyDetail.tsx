@@ -41,7 +41,7 @@ export function StrategyDetail({
 
       // Listen SSE
       const es = new EventSource(SSE_URL)
-      es.onmessage = (e) => {
+      const onProgress = (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data)
           setProgress(data.message || `${data.pct}%`)
@@ -52,6 +52,7 @@ export function StrategyDetail({
           }
         } catch {}
       }
+      es.addEventListener("progress", onProgress)
       es.onerror = () => {
         es.close()
         setRunning(false)

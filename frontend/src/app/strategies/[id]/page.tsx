@@ -1,5 +1,6 @@
 import { api } from "@/lib/api"
 import { StrategyDetail } from "@/components/strategy/StrategyDetail"
+import Link from "next/link"
 
 export const revalidate = 0
 
@@ -16,7 +17,7 @@ export default async function StrategyDetailPage({ params }: { params: Promise<{
     return (
       <div className="max-w-7xl mx-auto py-16 text-center text-slate-400">
         <p className="text-xl mb-2">找不到策略</p>
-        <a href="/strategies" className="text-indigo-500 hover:underline">返回策略列表</a>
+        <Link href="/strategies" className="text-indigo-500 hover:underline">返回策略列表</Link>
       </div>
     )
   }

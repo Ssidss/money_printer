@@ -1,5 +1,11 @@
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 
+// ── Lightweight request cache (client) ─────────────────
+// 目標：減少同頁多元件重複打同一支 API 的成本（特別是 batch signals）
+const BATCH_SIGNAL_TTL_MS = 30_000
+const batchSignalCache = new Map<string, { expireAt: number; data: BatchSignalResponse }>()
+const batchSignalInflight = new Map<string, Promise<BatchSignalResponse>>()
+
 // ── Token 管理（client-side only）──────────────────────
 function getToken(): string | null {
   if (typeof window === "undefined") return null
@@ -38,6 +44,16 @@ async function getAuth<T>(path: string): Promise<T> {
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  return res.json()
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
@@ -193,10 +209,7 @@ export const api = {
   strategy: (id: number) => get<StrategyFull>(`/api/v2/strategies/${id}`),
   createStrategy: (body: StrategyCreateReq) => post<StrategyFull>("/api/v2/strategies", body),
   updateStrategy: (id: number, body: Partial<StrategyCreateReq>) =>
-    fetch(`${BASE}/api/v2/strategies/${id}`, {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).then(r => r.json()) as Promise<StrategyFull>,
+    put<StrategyFull>(`/api/v2/strategies/${id}`, body),
   deleteStrategy: (id: number) => del<{ ok: boolean }>(`/api/v2/strategies/${id}`),
   activateStrategy: (id: number) => post<{ ok: boolean }>(`/api/v2/strategies/${id}/activate`, {}),
   cloneStrategy: (id: number) => post<StrategyFull>(`/api/v2/strategies/${id}/clone`, {}),
@@ -265,8 +278,29 @@ export const api = {
   // Live Signals
   liveSignals: (ticker: string, strategies = "explosion_scanner,momentum_breakout") =>
     get<LiveSignalResponse>(`/api/v3/signals/${encodeURIComponent(ticker)}?strategies=${encodeURIComponent(strategies)}`),
-  batchSignals: (strategy = "explosion_scanner", market = "US") =>
-    get<BatchSignalResponse>(`/api/v3/signals/batch/all?strategy=${encodeURIComponent(strategy)}&market=${encodeURIComponent(market)}`),
+  batchSignals: async (strategy = "explosion_scanner", market = "US") => {
+    const key = `${strategy}|${market}`
+    const now = Date.now()
+    const cached = batchSignalCache.get(key)
+    if (cached && cached.expireAt > now) return cached.data
+
+    const inflight = batchSignalInflight.get(key)
+    if (inflight) return inflight
+
+    const req = get<BatchSignalResponse>(
+      `/api/v3/signals/batch/all?strategy=${encodeURIComponent(strategy)}&market=${encodeURIComponent(market)}`
+    )
+      .then((data) => {
+        batchSignalCache.set(key, { expireAt: Date.now() + BATCH_SIGNAL_TTL_MS, data })
+        return data
+      })
+      .finally(() => {
+        batchSignalInflight.delete(key)
+      })
+
+    batchSignalInflight.set(key, req)
+    return req
+  },
 
   // AI Notes
   aiNotes: (ticker?: string, limit = 20) =>

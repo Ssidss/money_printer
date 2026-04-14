@@ -51,32 +51,44 @@ const STRATEGY_COLOR: Record<string, string> = {
 
 type SignalMap = Record<string, BatchSignalResult[]>
 
-export function useBatchSignals() {
+type UseBatchSignalsOptions = {
+  strategies?: string[]
+  markets?: Array<"US" | "TW" | "ALL">
+}
+
+export function useBatchSignals(options?: UseBatchSignalsOptions) {
   const [signalMap, setSignalMap] = useState<SignalMap>({})
   const [loading, setLoading] = useState(true)
+  const strategyKey = (options?.strategies ?? []).join(",")
+  const marketKey = (options?.markets ?? []).join(",")
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
+      const strategies = options?.strategies !== undefined
+        ? options.strategies
+        : ["explosion_scanner", "momentum_breakout"]
+      const markets = options?.markets !== undefined
+        ? options.markets
+        : ["US", "TW"]
+
       try {
-        // Fetch explosion + momentum for US + TW in parallel (skip SMC — too slow)
-        const [expUS, momUS, expTW, momTW] = await Promise.allSettled([
-          api.batchSignals("explosion_scanner", "US"),
-          api.batchSignals("momentum_breakout", "US"),
-          api.batchSignals("explosion_scanner", "TW"),
-          api.batchSignals("momentum_breakout", "TW"),
-        ])
+        setLoading(true)
+        const results = await Promise.allSettled(
+          strategies.flatMap(strategy =>
+            markets.map(market => api.batchSignals(strategy, market))
+          )
+        )
 
         if (cancelled) return
 
         const map: SignalMap = {}
         const allResults: BatchSignalResult[] = []
 
-        if (expUS.status === "fulfilled") allResults.push(...expUS.value.results)
-        if (momUS.status === "fulfilled") allResults.push(...momUS.value.results)
-        if (expTW.status === "fulfilled") allResults.push(...expTW.value.results)
-        if (momTW.status === "fulfilled") allResults.push(...momTW.value.results)
+        for (const r of results) {
+          if (r.status === "fulfilled") allResults.push(...r.value.results)
+        }
 
         for (const sig of allResults) {
           if (!map[sig.ticker]) map[sig.ticker] = []
@@ -93,7 +105,7 @@ export function useBatchSignals() {
 
     load()
     return () => { cancelled = true }
-  }, [])
+  }, [strategyKey, marketKey, options?.strategies, options?.markets])
 
   return { signalMap, loading }
 }

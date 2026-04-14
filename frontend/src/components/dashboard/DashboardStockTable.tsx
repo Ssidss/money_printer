@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { useMemo } from "react"
 import type { TopPick, SmcTrendMTF } from "@/lib/api"
 import { useBatchSignals, SignalCell } from "./BatchSignals"
 import { useStrategy } from "@/contexts/StrategyContext"
@@ -68,8 +69,15 @@ export function DashboardStockTable({
   stocks: TopPick[]
   trendsMTF: Record<string, SmcTrendMTF>
 }) {
-  const { v3 } = useStrategy()
-  const { signalMap: batchSignalMap, loading: batchLoading } = useBatchSignals()
+  const { v3, selectedStrategies } = useStrategy()
+  const fastSelectedStrategies = useMemo(
+    () => selectedStrategies.filter(s => s === "explosion_scanner" || s === "momentum_breakout"),
+    [selectedStrategies]
+  )
+  const { signalMap: batchSignalMap, loading: batchLoading } = useBatchSignals({
+    strategies: fastSelectedStrategies,
+    markets: ["US", "TW"],
+  })
   // When V3 is active, use V3 signals; otherwise use batch signals
   const signalMap = v3.active ? v3.signalMap : batchSignalMap
   const sigLoading = v3.active ? v3.loading : batchLoading
@@ -95,8 +103,14 @@ export function DashboardStockTable({
             <th className="text-right px-4 py-3">情緒分</th>
             <th className="text-right px-4 py-3">RSI</th>
             <th className="text-center px-4 py-3">SMC 趨勢</th>
-            <th className="text-center px-4 py-3">策略信號</th>
-            <th className="text-center px-4 py-3">推薦</th>
+            <th className="text-center px-4 py-3">
+              策略信號
+              <div className="text-[9px] normal-case text-slate-300">v3</div>
+            </th>
+            <th className="text-center px-4 py-3">
+              推薦
+              <div className="text-[9px] normal-case text-slate-300">v1/v2</div>
+            </th>
             <th className="text-center px-4 py-3">建議操作</th>
           </tr>
         </thead>

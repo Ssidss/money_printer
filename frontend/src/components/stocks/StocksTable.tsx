@@ -5,6 +5,7 @@ import Link from "next/link"
 import type { TopPick, Stock, EntrySuggestion, AiNoteLatest, SmcTrendMTF } from "@/lib/api"
 import { RemoveStockButton } from "./RemoveStockButton"
 import { useBatchSignals, SignalCell } from "@/components/dashboard/BatchSignals"
+import { useStrategy } from "@/contexts/StrategyContext"
 
 type MergedStock = Stock & Partial<TopPick>
 
@@ -165,10 +166,20 @@ interface Props {
 }
 
 export function StocksTable({ stocks, trendsMTF, analysisDone, aiNotes = {} }: Props) {
+  const { selectedStrategies, v3 } = useStrategy()
   const [market, setMarket] = useState<Market>("ALL")
   const [sortKey, setSortKey] = useState<SortKey>("composite_score")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
-  const { signalMap, loading: signalsLoading } = useBatchSignals()
+  const fastSelectedStrategies = useMemo(
+    () => selectedStrategies.filter(s => s === "explosion_scanner" || s === "momentum_breakout"),
+    [selectedStrategies]
+  )
+  const { signalMap: batchSignalMap, loading: batchSignalsLoading } = useBatchSignals({
+    strategies: fastSelectedStrategies,
+    markets: ["US", "TW"],
+  })
+  const signalMap = v3.active ? v3.signalMap : batchSignalMap
+  const signalsLoading = v3.active ? v3.loading : batchSignalsLoading
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -272,10 +283,12 @@ export function StocksTable({ stocks, trendsMTF, analysisDone, aiNotes = {} }: P
                   <th className="text-center px-4 py-3">SMC 趨勢</th>
                   <th className={`text-center ${thClass}`} onClick={() => toggleSort("recommendation")}>
                     推薦 <SortIcon active={sortKey === "recommendation"} dir={sortDir} />
+                    <div className="text-slate-300 font-normal normal-case">v1/v2</div>
                   </th>
                   <th className="text-center px-4 py-3">建議操作</th>
                   <th className="text-center px-4 py-3 min-w-[80px]">
                     <span className="text-cyan-600">策略信號</span>
+                    <div className="text-slate-300 font-normal normal-case">v3</div>
                   </th>
                   <th className="text-right px-4 py-3 min-w-[110px]">
                     <span className="text-indigo-500">進出場</span>

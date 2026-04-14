@@ -9,9 +9,9 @@ const nav = [
   { href: "/stocks", label: "股票清單", icon: "📈" },
   { href: "/analysis", label: "系統說明", icon: "📖" },
   { href: "/portfolio", label: "投資組合", icon: "💼" },
-  { href: "/backtest", label: "回測 v1", icon: "⏪" },
   { href: "/strategies", label: "策略回測", icon: "🧪" },
   { href: "/scanner", label: "爆擊掃描", icon: "🔥" },
+  { href: "/backtest", label: "回測 v1（舊版）", icon: "⏪" },
 ]
 
 export function Sidebar() {

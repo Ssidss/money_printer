@@ -14,15 +14,15 @@ const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => {
+    if (typeof window === "undefined") return true
+    return Boolean(localStorage.getItem("mp_token"))
+  })
 
   // 啟動時檢查 localStorage 有沒有 token
   useEffect(() => {
     const token = localStorage.getItem("mp_token")
-    if (!token) {
-      setLoading(false)
-      return
-    }
+    if (!token) return
     api.me()
       .then(setUser)
       .catch(() => {

@@ -23,6 +23,11 @@ function pctColor(v: number) {
   return v > 0 ? "text-green-600" : v < 0 ? "text-red-500" : "text-slate-600"
 }
 
+type StrategyCorrelationData = {
+  matrix: Record<string, number>
+  warnings?: string[]
+}
+
 // ── Main Panel ──────────────────────────────────────────
 // Sync backtest results to StrategyContext
 function syncMetricsToContext(
@@ -142,15 +147,16 @@ export function BacktestV3Panel() {
       setProgress("逾時，請檢查後端狀態")
     }, 600_000) // 10 min timeout
 
-    es.onmessage = (e) => {
+    const onProgress = (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
-        if (data.status === "done" || data.status === "error") {
+        const phase: string = data.phase ?? data.status ?? ""
+        if (phase === "done" || phase === "error") {
           clearTimeout(timeout)
           es.close()
           esRef.current = null
           setLoading(false)
-          if (data.status === "done") {
+          if (phase === "done") {
             api.backtestV3Result().then(r => {
               setReport(r)
               setSelectedHistoryId(null)
@@ -170,10 +176,11 @@ export function BacktestV3Panel() {
           setProgressPct(100)
         } else {
           setProgress(data.message || "")
-          setProgressPct(data.current ?? 0)
+          setProgressPct(data.pct ?? data.current ?? 0)
         }
       } catch { /* ignore malformed SSE */ }
     }
+    es.addEventListener("progress", onProgress)
     es.onerror = () => {
       clearTimeout(timeout)
       es.close()
@@ -239,6 +246,7 @@ export function BacktestV3Panel() {
   const s = report?.portfolio_summary
   const meta = report?.metadata
   const breakdown = report?.strategy_breakdown
+  const strategyCorrelation = (report as BacktestV3Report & { strategy_correlation?: StrategyCorrelationData } | null)?.strategy_correlation
 
   return (
     <div className="space-y-6">
@@ -446,11 +454,11 @@ export function BacktestV3Panel() {
           )}
 
           {/* Strategy Correlation */}
-          {report && (report as any).strategy_correlation?.matrix && Object.keys((report as any).strategy_correlation.matrix).length > 0 && (
+          {strategyCorrelation?.matrix && Object.keys(strategyCorrelation.matrix).length > 0 && (
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
               <h4 className="text-sm font-semibold text-slate-700 mb-3">Strategy Correlation</h4>
               <div className="space-y-2">
-                {Object.entries((report as any).strategy_correlation.matrix as Record<string, number>).map(([pair, val]) => (
+                {Object.entries(strategyCorrelation.matrix).map(([pair, val]) => (
                   <div key={pair} className="flex items-center justify-between text-sm">
                     <span className="text-slate-600">{pair}</span>
                     <span className={`font-mono font-semibold ${Math.abs(val) > 0.7 ? "text-red-500" : val > 0.3 ? "text-amber-500" : "text-green-600"}`}>
@@ -460,9 +468,9 @@ export function BacktestV3Panel() {
                   </div>
                 ))}
               </div>
-              {((report as any).strategy_correlation.warnings as string[])?.length > 0 && (
+              {(strategyCorrelation.warnings ?? []).length > 0 && (
                 <div className="mt-2 text-xs text-amber-600">
-                  {((report as any).strategy_correlation.warnings as string[]).map((w, i) => (
+                  {strategyCorrelation.warnings?.map((w, i) => (
                     <div key={i}>{w}</div>
                   ))}
                 </div>
