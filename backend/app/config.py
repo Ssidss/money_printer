@@ -17,6 +17,15 @@ class Settings(BaseSettings):
         pwd = f":{self.DB_PASSWORD}" if self.DB_PASSWORD else ""
         return f"postgresql+asyncpg://{self.DB_USER}{pwd}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
+    @property
+    def AUTO_DB(self) -> bool:
+        """是否自動啟動嵌入式 PostgreSQL（條件：localhost + 空密碼 + postgres 用戶）"""
+        return (
+            self.DB_HOST == "localhost"
+            and self.DB_PASSWORD == ""
+            and self.DB_USER == "postgres"
+        )
+
     # ── 認證 ───────────────────────────────────────────────
     SECRET_KEY: str = "dev-only-change-in-production-please"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 小時

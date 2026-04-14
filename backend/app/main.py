@@ -2,8 +2,9 @@ from __future__ import annotations
 """
 FastAPI App 主體
 startup 時：
-  1. 建立 DB 表
-  2. 匯入追蹤股票清單
+  1. 若 AUTO_DB 啟用，自動啟動嵌入式 PostgreSQL
+  2. 建立 DB 表
+  3. 匯入追蹤股票清單
 """
 
 import logging
@@ -15,6 +16,7 @@ from sqlalchemy import select
 
 from .config import settings
 from .database import engine, AsyncSessionLocal, Base
+from .embedded_postgres import PostgreSQLManager
 from .models import (
     User,
     Stock, PriceHistory, AnalysisResult, NewsArticle,
@@ -27,6 +29,9 @@ from .routers import strategies, backtest_v2, backtest_v3, auth, scanner, signal
 from .services.fetcher import ensure_stock_exists
 
 logger = logging.getLogger(__name__)
+
+# 全域 PostgreSQL 管理器實例
+_pg_manager: PostgreSQLManager | None = None
 
 
 async def _init_stocks(db):
@@ -42,7 +47,29 @@ async def _init_stocks(db):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────
+    global _pg_manager
+
     logger.info("Money Printer 啟動中...")
+
+    # 若啟用 AUTO_DB，自動啟動嵌入式 PostgreSQL
+    if settings.AUTO_DB:
+        logger.info("AUTO_DB 已啟用，嘗試啟動嵌入式 PostgreSQL...")
+        _pg_manager = PostgreSQLManager(
+            pgdata_dir="~/.money_printer/pgdata",
+            db_user=settings.DB_USER,
+            db_password=settings.DB_PASSWORD,
+            db_port=settings.DB_PORT,
+        )
+        try:
+            startup_info = await _pg_manager.start()
+            logger.info(f"✓ PostgreSQL 啟動成功: {startup_info}")
+            # 確保目標資料庫存在
+            await _pg_manager.ensure_database_exists(settings.DB_NAME)
+        except Exception as e:
+            logger.error(f"✗ PostgreSQL 啟動失敗: {e}")
+            raise
+    else:
+        logger.info("AUTO_DB 未啟用，使用外部 PostgreSQL 或 DATABASE_URL 環境變數")
 
     # 建立所有 DB 表
     async with engine.begin() as conn:
@@ -59,6 +86,15 @@ async def lifespan(app: FastAPI):
     # ── Shutdown ──────────────────────────────────────────────────────
     await engine.dispose()
     logger.info("Money Printer 關閉")
+
+    # 若啟用 AUTO_DB，優雅停止嵌入式 PostgreSQL
+    if _pg_manager is not None:
+        logger.info("停止嵌入式 PostgreSQL...")
+        try:
+            await _pg_manager.stop()
+            logger.info("✓ PostgreSQL 已停止")
+        except Exception as e:
+            logger.error(f"✗ PostgreSQL 停止失敗: {e}")
 
 
 app = FastAPI(
