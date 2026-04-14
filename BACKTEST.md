@@ -50,11 +50,9 @@
 |------|----------|
 | VBT 回測主入口 | `backend/app/services/backtest_vbt.py` |
 | 策略基類 (ABC) | `backend/app/services/backtest_v3/strategy.py` |
-| 通用回測引擎 | `backend/app/services/backtest_v3/engine.py` |
 | 資料提供者 | `backend/app/services/backtest_v3/provider.py` |
 | 核心資料模型 | `backend/app/services/backtest_v3/models.py` |
-| 策略目錄 | `backend/app/services/backtest_v3/strategies/` |
-| CLI 執行腳本 | `backend/run_backtest_v3.py` |
+| 策略目錄（VBT 路徑使用） | `backend/app/services/strategies/` |
 | REST API (VBT) | `backend/app/routers/backtest_vbt.py` |
 
 ---
@@ -122,7 +120,7 @@ calculate_metrics()        ← 完整 KPI 計算
 |----------|----------|------|
 | `train` | 2018-01-01 ～ 2022-12-31 | 策略開發 / 參數優化 |
 | `validation` | 2023-01-01 ～ 2024-12-31 | 樣本外驗證（主要評估期） |
-| `test` | 2025-01-01 ～ 現在 | 最終驗收（只能看一次！） |
+| `test` | 2025-01-01 ～ 2026-12-31 | 最終驗收（只能看一次！）（到期需人工更新） |
 
 **強制規定**：
 - 策略開發期間**只能使用 train**
@@ -162,6 +160,8 @@ execution = ExecutionModel(
 ```
 
 > **重要**：美股成本比台股低，不可混用。執行前確認 `market` 參數正確。
+
+> **⚠️ 已知限制（VBT 路徑）**：`backtest_vbt.py:390` 目前 `slippage` 固定使用 `_US_SLIPPAGE = 0.0005`，不隨 `market` 切換。台股回測的費用（`_TW_FEES`）已正確套用，但滑點實際為 0.05%（非 0.1%）。此為已知 bug，待修正前請注意此差異。
 
 ---
 
@@ -244,7 +244,9 @@ curl http://localhost:8000/backtest/vbt/strategies
 
 ### 步驟 2：建立策略檔案
 
-在 `backend/app/services/backtest_v3/strategies/` 新增 `my_strategy.py`：
+在 `backend/app/services/strategies/` 新增 `my_strategy.py`：
+
+> **注意**：策略檔案放在 `backend/app/services/strategies/`（VBT 路徑使用）。這是唯一的策略目錄——`backtest_v3/` 下沒有 `strategies/` 子目錄。
 
 ```python
 from ..models import Signal
@@ -326,11 +328,11 @@ class MyStrategy(BaseStrategy):
 
 ```python
 def _build_registry():
-    from .backtest_v3.strategies.smc_strategy import SMCStrategy
-    from .backtest_v3.strategies.momentum_breakout import MomentumBreakoutStrategy
-    from .backtest_v3.strategies.explosion_scanner import ExplosionScannerStrategy
-    from .backtest_v3.strategies.mock_strategy import MockStrategy
-    from .backtest_v3.strategies.my_strategy import MyStrategy  # ← 新增
+    from .strategies.smc_strategy import SMCStrategy
+    from .strategies.momentum_breakout import MomentumBreakoutStrategy
+    from .strategies.explosion_scanner import ExplosionScannerStrategy
+    from .strategies.mock_strategy import MockStrategy
+    from .strategies.my_strategy import MyStrategy  # ← 新增
 
     return {
         "smc_v2": SMCStrategy,
@@ -353,17 +355,26 @@ STRATEGY_METADATA = {
 }
 ```
 
-### 步驟 4：也要在 run_backtest_v3.py 加入（如果要走路徑 B）
+### 步驟 4：若有獨立 CLI 腳本，也要同步加入
+
+若你的專案有 CLI 腳本（如 `run_backtest_v3.py`），需在 `STRATEGY_MAP` 加入新策略，並在 `argparse` 新增對應參數：
 
 ```python
-# backend/run_backtest_v3.py
-from backend.app.services.backtest_v3.strategies.my_strategy import MyStrategy
+# 範例：若有 CLI 腳本
+from backend.app.services.strategies.my_strategy import MyStrategy
 
+# 1. 先在 argparse 新增策略參數
+parser.add_argument("--breakout-days", type=int, default=20,
+                    help="N 日突破天數")
+
+# 2. 再加入 STRATEGY_MAP
 STRATEGY_MAP = {
     # ... 現有策略 ...
     "my_strategy": lambda: MyStrategy(breakout_days=args.breakout_days),  # ← 新增
 }
 ```
+
+> **注意**：CLI 腳本裡使用的每個 `args.<param>` 都必須先在 `argparse` 中 `add_argument`，否則會拋出 `AttributeError`。
 
 ### 步驟 5：驗證 Signal 格式
 
