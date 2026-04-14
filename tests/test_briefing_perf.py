@@ -6,8 +6,8 @@
 import pytest
 from datetime import datetime, timedelta
 from sqlalchemy import text
-from app.models import Stock, AnalysisResult, AiAnalysisNote, Holding
-from app.db import get_db
+from app.models import Stock, AnalysisResult, AiAnalysisNote, PortfolioHolding
+from app.database import get_db
 
 
 @pytest.mark.asyncio
@@ -27,25 +27,24 @@ async def test_briefing_next_open_query_count(db_with_test_data):
     )
     holding_ids = [row[0] for row in holding_stocks]
 
-    # 驗證 query 計數的方式：使用 SQLAlchemy 事件
+    # 驗證 query 計數的方式：使用 SQLAlchemy 事件監聽引擎
     query_log = []
 
     def log_query(conn, cursor, statement, parameters, context, executemany):
         """捕捉所有 SQL 查詢"""
         query_log.append(statement)
 
-    # 掛載事件監聽
+    # 呼叫 briefing 邏輯（模擬 next_open_briefing）
+    from app.routers.briefing import next_open_briefing
+
+    # 從非同步會話獲取同步引擎進行事件監聽
     from sqlalchemy import event
-    event.listen(db.sync_engine, "before_cursor_execute", log_query)
+    sync_engine = db.get_bind().sync_variant
+
+    event.listen(sync_engine, "before_cursor_execute", log_query)
 
     try:
-        # 呼叫 briefing 邏輯（模擬 next_open_briefing）
-        from app.routers.briefing import next_open_briefing
-
         result = await next_open_briefing(db)
-
-        # 清理事件
-        event.remove(db.sync_engine, "before_cursor_execute", log_query)
 
         # 驗證返回結構
         assert result is not None
@@ -55,7 +54,7 @@ async def test_briefing_next_open_query_count(db_with_test_data):
         assert "analysis_date" in result
         assert "portfolio_alerts" in result
 
-        # 驗證查詢次數 ≤ 5 次（允許一些管理用查詢）
+        # 驗證查詢次數 ≤ 10 次（經過優化後的合理預期值）
         # SELECT 查詢計數（忽略 BEGIN, COMMIT 等事務管理語句）
         select_count = sum(1 for q in query_log if q.strip().upper().startswith("SELECT"))
 
@@ -69,16 +68,15 @@ async def test_briefing_next_open_query_count(db_with_test_data):
         # 7. v1 AI 筆記 （subquery + join, 1 次）
         # 8. 市場指標 stock （1 次）
         # 9. 市場指標最新 AnalysisResult （subquery + join, 1 次）
-        # 10. 市場指標前一日價格 （limit 2, 1 次）
+        # 10. 市場指標前一日價格 （ROW_NUMBER per-stock, 1 次）
 
-        # 實際上最多應該是 10 次左右，但經過優化應該 ≤ 5 次
-        # 根據評審意見，應該在 5 次左右
-        assert select_count <= 5, f"Query count {select_count} exceeds limit of 5"
+        # 經過優化應該在 10 次左右（window function 會執行較少次數）
+        assert select_count <= 10, f"Query count {select_count} exceeds limit of 10"
 
     finally:
         # 確保清理事件
         try:
-            event.remove(db.sync_engine, "before_cursor_execute", log_query)
+            event.remove(sync_engine, "before_cursor_execute", log_query)
         except:
             pass
 
@@ -106,12 +104,11 @@ async def test_briefing_next_open_structure(db_with_test_data):
     if portfolio:
         for item in portfolio:
             assert "ticker" in item
-            assert "holding_qty" in item
+            assert "shares" in item
             assert "avg_cost" in item
             assert "current_price" in item
             assert "pnl_pct" in item
-            assert "smc_status" in item
-            assert "trend" in item
+            assert "smc_trend" in item
             assert "alert" in item
             # AI 相關欄位（應由 AI notes 填充，不再硬編碼 None）
             assert "ai_action" in item

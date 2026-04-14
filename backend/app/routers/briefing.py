@@ -350,11 +350,21 @@ async def next_open_briefing(db: AsyncSession = Depends(get_db)):
     prev_price_map = {}
     if idx_ar_map:
         # 對每個股票，查詢最新的 2 筆記錄（latest + previous）
-        prev_ar_r = await db.execute(
-            select(AnalysisResult)
+        # 使用 ROW_NUMBER() window function 來實現每個 stock_id 的 LIMIT
+        subq = (
+            select(
+                AnalysisResult,
+                func.row_number()
+                .over(partition_by=AnalysisResult.stock_id,
+                      order_by=desc(AnalysisResult.analysis_date))
+                .label('rn')
+            )
             .where(AnalysisResult.stock_id.in_(list(idx_ar_map.keys())))
-            .order_by(AnalysisResult.stock_id, desc(AnalysisResult.analysis_date))
-            .limit(2)  # 只取最新 2 筆，避免載入完整歷史
+            .subquery()
+        )
+
+        prev_ar_r = await db.execute(
+            select(subq).where(subq.c.rn <= 2)
         )
         all_prev_ars = prev_ar_r.scalars().all()
 
