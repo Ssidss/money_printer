@@ -8,6 +8,8 @@ startup 時：
 """
 
 import logging
+import sys
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -44,6 +46,21 @@ async def _init_stocks(db):
     logger.info(f"股票清單初始化完成：US {len(settings.US_STOCKS)} 支，TW {len(settings.TW_STOCKS)} 支")
 
 
+async def _run_migrations():
+    """執行所有資料庫遷移"""
+    try:
+        # 動態導入遷移模組
+        backend_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if backend_path not in sys.path:
+            sys.path.insert(0, backend_path)
+
+        from migrate_kina260_ai_notes_results import migrate as migrate_kina260
+        await migrate_kina260()
+        logger.info("✓ 遷移 KINA-260 完成")
+    except Exception as e:
+        logger.warning(f"遷移執行失敗或已完成（非首次運行）: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────
@@ -75,6 +92,10 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("DB 表建立完成")
+
+    # 執行資料庫遷移 (KINA-260: 添加 AI notes 結果追蹤欄位)
+    await _run_migrations()
+    logger.info("DB 遷移完成")
 
     async with AsyncSessionLocal() as db:
         await _init_stocks(db)
