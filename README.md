@@ -21,7 +21,7 @@
 | 後端 | FastAPI + SQLAlchemy 2.0 (async) + asyncpg |
 | 資料庫 | PostgreSQL 15 |
 | 前端 | Next.js 16 + TypeScript + Tailwind CSS v4 |
-| 資料源 | yfinance（美股 + 台股）|
+| 資料源 | yfinance（美股）+ TWSE API（台股歷史數據）|
 | Python | 3.11（建議用 conda 管理）|
 
 ## 系統架構
