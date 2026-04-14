@@ -5,6 +5,7 @@ AI 分析筆記 API
 - GET    /ai-notes                      取得所有筆記（可過濾 ticker）
 - GET    /ai-notes/latest               取得每支股票最新一筆 AI 筆記（用於清單頁顯示）
 - GET    /ai-notes/strategy-memory      策略失誤分析 + 記憶摘要結構（KINA-277）
+- GET    /ai-notes/memory-context       分析時自動載入記憶 context（KINA-278）
 - GET    /ai-notes/{id}                 取得單筆筆記
 - DELETE /ai-notes/{id}                 刪除筆記
 """
@@ -58,6 +59,24 @@ class StrategyMemoryResponse(BaseModel):
     top_failure_patterns: List[FailurePattern] = Field(..., description="失敗率 > 50% 的頂層組合（最多 5 筆）")
     total_analyzed: int = Field(..., ge=0, description="分析的已結束筆記總數")
     summary: StrategySummary = Field(..., description="策略分析摘要")
+
+
+class HistoricalPattern(BaseModel):
+    """歷史模式數據"""
+    smc_trend: str = Field(..., description="SMC 趨勢")
+    recommendation: str = Field(..., description="推薦等級")
+    win_rate: float = Field(..., ge=0, le=1, description="勝率")
+    avg_return_pct: float = Field(..., description="平均回報百分比")
+    sample_count: int = Field(..., ge=0, description="樣本數量")
+
+
+class MemoryContextResponse(BaseModel):
+    """分析時自動載入的記憶 context"""
+    has_memory: bool = Field(..., description="是否有足夠的歷史數據（樣本數 >= 5）")
+    confidence_adjustment: float = Field(..., description="信心度調整值 = (win_rate - 0.5) * 0.3")
+    warnings: List[str] = Field(..., description="警告訊息列表")
+    historical_pattern: Optional[HistoricalPattern] = Field(None, description="匹配到的歷史模式")
+    context_summary: Optional[str] = Field(None, description="記憶 context 總結")
 
 
 class AiNoteCreate(BaseModel):
@@ -217,6 +236,34 @@ async def get_strategy_memory_endpoint(db: AsyncSession = Depends(get_db)):
     return await get_strategy_memory(db)
 
 
+@router.get("/memory-context", response_model=MemoryContextResponse)
+async def get_memory_context_endpoint(
+    smc_trend: str = Query(..., description="當前市況（如「上升趨勢」、「盤整」、「下降趨勢」）"),
+    recommendation_hint: str = Query(..., description="擬推薦等級（如「推薦」）"),
+    composite_score: Optional[float] = Query(None, description="當前複合分數（可選，用於精確匹配）"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    KINA-278: 分析時自動載入記憶 context
+
+    根據當前市況 (smc_trend) 和擬推薦等級 (recommendation_hint)，
+    從歷史 AI 分析筆記中查詢匹配的模式，計算信心度調整值，並生成警告訊息。
+
+    Query Parameters:
+    - smc_trend: 當前市況（如「上升趨勢」、「盤整」、「下降趨勢」）
+    - recommendation_hint: 擬推薦等級（如「推薦」）
+    - composite_score: 當前複合分數（可選，用於精確匹配）
+
+    Returns:
+    - has_memory: 是否有足夠的歷史數據（樣本數 >= 5）
+    - confidence_adjustment: 信心度調整值
+    - warnings: 警告訊息列表
+    - historical_pattern: 匹配到的歷史模式
+    - context_summary: 記憶 context 總結
+    """
+    return await get_memory_context(db, smc_trend, recommendation_hint, composite_score)
+
+
 # ── 具體路由 (KINA-264: 必須在通用路由 /{note_id} 之前定義) ──────────────
 
 
@@ -343,6 +390,129 @@ async def get_strategy_memory(db: AsyncSession = Depends(get_db)) -> StrategyMem
         top_failure_patterns=failure_patterns,
         total_analyzed=len(notes),
         summary=summary
+    )
+
+
+async def get_memory_context(
+    db: AsyncSession,
+    smc_trend: str,
+    recommendation_hint: str,
+    composite_score: Optional[float] = None,
+) -> MemoryContextResponse:
+    """
+    (Internal function) 分析時自動載入記憶 context
+
+    邏輯：
+    1. 從歷史筆記中精確匹配 (smc_trend, recommendation_hint)
+    2. 如果 sample_count < 5，has_memory = false
+    3. 計算 confidence_adjustment = (win_rate - 0.5) * 0.3
+    4. 根據 win_rate 和 avg_return_pct 生成警告
+    5. 生成 context_summary
+    """
+    # 獲取所有已結束的筆記
+    completed = await db.execute(
+        select(AiAnalysisNote).where(
+            AiAnalysisNote.outcome_status != "pending"
+        )
+    )
+    notes = completed.scalars().all()
+
+    # 如果沒有已結束的筆記，返回 no_memory
+    if not notes:
+        return MemoryContextResponse(
+            has_memory=False,
+            confidence_adjustment=0.0,
+            warnings=[],
+            historical_pattern=None,
+            context_summary="暫無歷史數據，無法提供記憶 context"
+        )
+
+    # 按 (smc_trend, recommendation) 分組
+    pattern_groups: dict = {}
+    for note in notes:
+        key = (note.smc_trend, note.recommendation)
+        if key not in pattern_groups:
+            pattern_groups[key] = []
+        pattern_groups[key].append(note)
+
+    # 精確匹配 (smc_trend, recommendation_hint)
+    target_key = (smc_trend, recommendation_hint)
+    if target_key not in pattern_groups:
+        return MemoryContextResponse(
+            has_memory=False,
+            confidence_adjustment=0.0,
+            warnings=[],
+            historical_pattern=None,
+            context_summary=f"該市況（{smc_trend}）下無該推薦等級（{recommendation_hint}）的歷史數據"
+        )
+
+    group_notes = pattern_groups[target_key]
+    sample_count = len(group_notes)
+
+    # 樣本不足（< 5），return has_memory = false
+    if sample_count < 5:
+        return MemoryContextResponse(
+            has_memory=False,
+            confidence_adjustment=0.0,
+            warnings=[f"樣本數不足（僅 {sample_count} 筆），數據不足以提供準確建議"],
+            historical_pattern=HistoricalPattern(
+                smc_trend=smc_trend,
+                recommendation=recommendation_hint,
+                win_rate=0.0,
+                avg_return_pct=0.0,
+                sample_count=sample_count,
+            ),
+            context_summary=f"樣本數不足（僅 {sample_count} 筆），建議繼續積累歷史數據"
+        )
+
+    # 計算統計
+    hit_target_count = sum(1 for n in group_notes if n.outcome_status == "hit_target")
+    win_rate = hit_target_count / sample_count if sample_count > 0 else 0.0
+
+    # 計算平均回報百分比
+    returns = [float(n.actual_return_pct) for n in group_notes if n.actual_return_pct is not None]
+    avg_return_pct = sum(returns) / len(returns) if returns else 0.0
+
+    # 計算信心度調整值
+    confidence_adjustment = round((win_rate - 0.5) * 0.3, 2)
+
+    # 生成警告
+    warnings = []
+    if win_rate < 0.4:
+        warnings.append(
+            f"在{smc_trend}市況下{recommendation_hint}的歷史勝率僅 {win_rate*100:.0f}%（{sample_count} 筆），"
+            f"建議降低信心度"
+        )
+    if avg_return_pct < -3.0:
+        warnings.append(
+            f"在{smc_trend}市況下{recommendation_hint}的平均回報為 {avg_return_pct:.2f}%，"
+            f"歷史績效欠佳，建議審視策略"
+        )
+
+    # 生成 context_summary
+    if win_rate >= 0.6:
+        context_status = "歷史績效良好"
+    elif win_rate >= 0.5:
+        context_status = "歷史績效中等"
+    else:
+        context_status = "歷史績效欠佳"
+
+    context_summary = f"在此市況下此推薦等級的{context_status}（勝率 {win_rate*100:.0f}%，平均回報 {avg_return_pct:.2f}%，樣本 {sample_count} 筆）"
+
+    historical_pattern = HistoricalPattern(
+        smc_trend=smc_trend,
+        recommendation=recommendation_hint,
+        win_rate=round(win_rate, 2),
+        avg_return_pct=round(avg_return_pct, 2),
+        sample_count=sample_count,
+    )
+
+    return MemoryContextResponse(
+        has_memory=True,
+        confidence_adjustment=confidence_adjustment,
+        warnings=warnings,
+        historical_pattern=historical_pattern,
+        context_summary=context_summary
     )
 
 
