@@ -2,12 +2,6 @@
 
 自動化美股 / 台股分析系統，基於 Smart Money Concepts (SMC) + 多時間框架 (MTF) 結構分析，提供分層決策與倉位管理建議。
 
-## Repositories
-
-| 平台 | URL |
-|------|-----|
-| GitHub | https://github.com/Ssidss/money_printer |
-| Gitea | https://git.ose.tw/king-army/money-printer |
 
 ## 功能特色
 
@@ -111,8 +105,6 @@ Layer 5: MTF 對齊
 
 ```bash
 git clone https://github.com/Ssidss/money_printer.git money_printer
-# 或從 Gitea
-# git clone https://git.ose.tw/king-army/money-printer.git money_printer
 cd money_printer
 ```
 
