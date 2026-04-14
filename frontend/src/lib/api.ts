@@ -429,7 +429,7 @@ export type AiNote = {
   price_at_analysis: number | null; composite_score: number | null; smc_trend: string | null
   entry_price: number | null; stop_price: number | null; target_price: number | null; rr_ratio: number | null
   scenarios: Record<string, unknown> | null
-  outcome_status?: string | null; actual_return_pct?: number | null
+  outcome_status?: "pending" | "hit_target" | "hit_stop" | "expired" | null; actual_return_pct?: number | null
   closed_price?: number | null; closed_at?: string | null
   created_at: string
 }

@@ -20,11 +20,18 @@ const ACTION_BADGE: Record<string, string> = {
   "觀望": "bg-slate-100 text-slate-500",
 }
 
+const OUTCOME_LABEL: Record<string, string> = {
+  "hit_target": "達標",
+  "hit_stop": "停損",
+  "expired": "到期",
+  "pending": "進行中",
+}
+
 const OUTCOME_BADGE: Record<string, string> = {
-  "盈利": "bg-green-100 text-green-700 border-green-200",
-  "虧損": "bg-red-100 text-red-700 border-red-200",
-  "進行中": "bg-blue-100 text-blue-700 border-blue-200",
-  "pending": "bg-slate-100 text-slate-500 border-slate-200",
+  "hit_target": "bg-green-100 text-green-700 border-green-200",
+  "hit_stop": "bg-red-100 text-red-700 border-red-200",
+  "expired": "bg-slate-100 text-slate-500 border-slate-200",
+  "pending": "bg-blue-100 text-blue-700 border-blue-200",
 }
 
 function timeAgo(dateStr: string): string {
@@ -126,7 +133,7 @@ export function AiNotes({ ticker }: { ticker: string }) {
                   )}
                   {note.outcome_status && (
                     <span className={`text-xs px-2 py-0.5 rounded border font-medium ${OUTCOME_BADGE[note.outcome_status] ?? "bg-slate-100 text-slate-500 border-slate-200"}`}>
-                      {note.outcome_status}
+                      {OUTCOME_LABEL[note.outcome_status] ?? note.outcome_status}
                     </span>
                   )}
                   {note.smc_trend && (
@@ -185,7 +192,8 @@ export function AiNotes({ ticker }: { ticker: string }) {
                 )}
 
                 {/* Result summary */}
-                {(note.closed_price != null || note.actual_return_pct != null || note.outcome_status) && (
+                {(note.closed_price != null || note.actual_return_pct != null ||
+                  (note.outcome_status && note.outcome_status !== "pending")) && (
                   <div className="mt-3 mb-3 rounded-lg bg-slate-50 border border-slate-100 p-3">
                     <p className="text-xs font-semibold text-slate-600 mb-2">交易結果</p>
                     <div className="grid grid-cols-3 gap-2">
@@ -210,12 +218,12 @@ export function AiNotes({ ticker }: { ticker: string }) {
                         <div className="text-center">
                           <p className="text-xs text-slate-400">狀態</p>
                           <p className={`text-sm font-bold px-2 py-1 rounded ${
-                            note.outcome_status === "盈利" ? "text-green-600 bg-green-50" :
-                            note.outcome_status === "虧損" ? "text-red-600 bg-red-50" :
-                            note.outcome_status === "進行中" ? "text-blue-600 bg-blue-50" :
+                            note.outcome_status === "hit_target" ? "text-green-600 bg-green-50" :
+                            note.outcome_status === "hit_stop" ? "text-red-600 bg-red-50" :
+                            note.outcome_status === "pending" ? "text-blue-600 bg-blue-50" :
                             "text-slate-600 bg-slate-100"
                           }`}>
-                            {note.outcome_status}
+                            {OUTCOME_LABEL[note.outcome_status] ?? note.outcome_status}
                           </p>
                         </div>
                       )}
