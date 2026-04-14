@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # ── 歷史資料抓取天數 ──────────────────────────────────
     PRICE_HISTORY_DAYS: int = 1825  # 5 年，供週線/月線 SMC 分析用
 
+    # ── TWSE 台股 API 配置 ────────────────────────────────
+    TWSE_API_BASE: str = "https://www.twse.com.tw/exchangeReport"
+    TWSE_STOCK_DAY_ENDPOINT: str = "STOCK_DAY"  # TWSE_API_BASE/STOCK_DAY
+    TWSE_API_TIMEOUT: int = 10
+    TWSE_API_RETRY_COUNT: int = 3
+
     # ── 技術分析參數 ──────────────────────────────────────
     RSI_PERIOD: int = 14
     RSI_OVERSOLD: float = 35.0

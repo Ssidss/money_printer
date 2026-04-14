@@ -1,7 +1,7 @@
 from __future__ import annotations
 """
 股價抓取 Service
-從 yfinance 抓取 OHLCV 並寫入 price_history 表
+從 yfinance（美股）或 TWSE API（台股）抓取 OHLCV 並寫入 price_history 表
 """
 
 import asyncio
@@ -15,11 +15,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.stock import Stock, PriceHistory
+from .twse_fetcher import fetch_twse_prices
 
 logger = logging.getLogger(__name__)
-
-# 台股 symbol 快取 {ticker: (symbol, suffix)}
-_TW_SYMBOL_CACHE: dict[str, tuple[str, str]] = {}
 
 TW_COMPANY_NAMES = {
     # 半導體
@@ -103,27 +101,6 @@ def _fetch_yfinance(symbol: str, start: str, end: str) -> pd.DataFrame | None:
         return None
 
 
-def _resolve_tw_symbol(ticker: str) -> tuple[str, str] | None:
-    """找出台股的 yfinance symbol（.TW 或 .TWO）— 結果快取"""
-    # 檢查快取
-    if ticker in _TW_SYMBOL_CACHE:
-        return _TW_SYMBOL_CACHE[ticker]
-
-    # 嘗試找出正確的 symbol
-    for suffix in [".TW", ".TWO"]:
-        try:
-            symbol = ticker + suffix
-            df = yf.Ticker(symbol).history(period="5d")
-            if not df.empty:
-                # 快取結果
-                _TW_SYMBOL_CACHE[ticker] = (symbol, suffix)
-                return symbol, suffix
-        except Exception:
-            pass
-
-    return None
-
-
 async def fetch_and_store_prices(
     db: AsyncSession,
     ticker: str,
@@ -144,19 +121,20 @@ async def fetch_and_store_prices(
 
     # 往回補更早的資料
     if earliest_date and desired_start < earliest_date:
-        backfill_start = desired_start.strftime("%Y-%m-%d")
-        backfill_end = earliest_date.strftime("%Y-%m-%d")
+        backfill_start = desired_start
+        backfill_end = earliest_date - timedelta(days=1)
         if progress_cb:
-            await progress_cb(f"回補 {ticker} 歷史股價 ({backfill_start} ~ {backfill_end})...")
+            await progress_cb(f"回補 {ticker} 歷史股價 ({backfill_start.strftime('%Y-%m-%d')} ~ {backfill_end.strftime('%Y-%m-%d')})...")
         loop = asyncio.get_event_loop()
+
+        # 按市場選擇資料源
         if market == "US":
-            bf_df = await loop.run_in_executor(None, _fetch_yfinance, ticker, backfill_start, backfill_end)
-        else:
-            symbol_info = await loop.run_in_executor(None, _resolve_tw_symbol, ticker)
-            bf_df = None
-            if symbol_info:
-                symbol, _ = symbol_info
-                bf_df = await loop.run_in_executor(None, _fetch_yfinance, symbol, backfill_start, backfill_end)
+            backfill_start_str = backfill_start.strftime("%Y-%m-%d")
+            backfill_end_str = backfill_end.strftime("%Y-%m-%d")
+            bf_df = await loop.run_in_executor(None, _fetch_yfinance, ticker, backfill_start_str, backfill_end_str)
+        else:  # TW market
+            bf_df = await fetch_twse_prices(ticker, backfill_start, backfill_end)
+
         if bf_df is not None and not bf_df.empty:
             rows = []
             for dt, row in bf_df.iterrows():
@@ -190,19 +168,13 @@ async def fetch_and_store_prices(
     if progress_cb:
         await progress_cb(f"正在抓取 {ticker} 股價 ({start_str} ~ {end_str})...")
 
-    # 在 executor 中跑同步的 yfinance 呼叫
+    # 按市場選擇資料源
     loop = asyncio.get_event_loop()
 
     if market == "US":
         df = await loop.run_in_executor(None, _fetch_yfinance, ticker, start_str, end_str)
-    else:
-        # 台股先找正確 symbol
-        symbol_info = await loop.run_in_executor(None, _resolve_tw_symbol, ticker)
-        if symbol_info is None:
-            logger.warning(f"[TW] {ticker} 找不到對應的 yfinance symbol")
-            return 0
-        symbol, _ = symbol_info
-        df = await loop.run_in_executor(None, _fetch_yfinance, symbol, start_str, end_str)
+    else:  # TW market，使用 TWSE API
+        df = await fetch_twse_prices(ticker, start_date, date.today())
 
     if df is None or df.empty:
         return 0
@@ -273,10 +245,9 @@ async def fetch_realtime_price(ticker: str, market: str) -> dict | None:
     if market == "US":
         return await loop.run_in_executor(None, _fetch_realtime_price, ticker)
     else:
-        symbol_info = await loop.run_in_executor(None, _resolve_tw_symbol, ticker)
-        if symbol_info is None:
-            return None
-        symbol, _ = symbol_info
+        # Phase 1：台股即時報價仍使用 yfinance（.TW 後綴）
+        # 未來 Phase 2 可改為 TWSE 即時行情 API
+        symbol = ticker + ".TW"
         return await loop.run_in_executor(None, _fetch_realtime_price, symbol)
 
 
