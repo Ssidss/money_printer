@@ -15,9 +15,9 @@ from ..backtest_v3.provider import DataProvider
 from ..backtest_v3.strategy import BaseStrategy
 
 # Existing SMC modules
-from ...smc import run_smc_analysis_v2
-from ...smc.config import SmcConfig, DEFAULT_CONFIG
-from ...decision.entry import generate_entry_plan
+from ..smc import run_smc_analysis_v2
+from ..smc.config import SmcConfig, DEFAULT_CONFIG
+from ..decision.entry import generate_entry_plan
 
 logger = logging.getLogger(__name__)
 
