@@ -3,6 +3,7 @@ import type { StrategyListItem } from "@/lib/api"
 import { StrategyList } from "@/components/strategy/StrategyList"
 import { BacktestV3Panel } from "@/components/strategy/BacktestV3Panel"
 import { BacktestHistory } from "@/components/strategy/BacktestHistory"
+import Link from "next/link"
 
 export const revalidate = 0
 
@@ -11,6 +12,15 @@ export default async function StrategiesPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-8">
+      {/* Quick Links */}
+      <div className="flex gap-2">
+        <Link
+          href="/strategies/memory"
+          className="inline-block px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-sm font-medium transition-colors"
+        >
+          📊 策略學習記錄
+        </Link>
+      </div>
       {/* V3 Multi-Strategy Backtest */}
       <section>
         <div className="mb-4">

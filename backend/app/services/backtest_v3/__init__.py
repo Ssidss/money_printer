@@ -10,7 +10,7 @@ from .provider import DataProvider, HistoricalProvider
 from .strategy import BaseStrategy
 from .engine import BacktestEngine
 from .metrics import calculate_metrics
-from .strategies import SMCStrategy, MomentumBreakoutStrategy, ExplosionScannerStrategy
+from ..strategies import SMCStrategy, MomentumBreakoutStrategy, ExplosionScannerStrategy
 
 __all__ = [
     "Signal", "Decision", "Order", "Position", "Portfolio",

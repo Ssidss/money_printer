@@ -41,10 +41,10 @@ _TW_SLIPPAGE = 0.001
 # ── Strategy Registry ─────────────────────────────────────────────────────────
 
 def _build_registry():
-    from .backtest_v3.strategies.smc_strategy import SMCStrategy
-    from .backtest_v3.strategies.momentum_breakout import MomentumBreakoutStrategy
-    from .backtest_v3.strategies.explosion_scanner import ExplosionScannerStrategy
-    from .backtest_v3.strategies.mock_strategy import MockStrategy
+    from .strategies.smc_strategy import SMCStrategy
+    from .strategies.momentum_breakout import MomentumBreakoutStrategy
+    from .strategies.explosion_scanner import ExplosionScannerStrategy
+    from .strategies.mock_strategy import MockStrategy
 
     return {
         "smc_v2": SMCStrategy,
