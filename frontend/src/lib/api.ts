@@ -263,6 +263,20 @@ export const api = {
     get<AiNote[]>(`/api/v1/ai-notes${ticker ? `?ticker=${encodeURIComponent(ticker)}&limit=${limit}` : `?limit=${limit}`}`),
   aiNotesLatest: () => get<Record<string, AiNoteLatest>>("/api/v1/ai-notes/latest"),
   aiNote: (id: number) => get<AiNote>(`/api/v1/ai-notes/${id}`),
+
+  // Pipeline (KINA-333)
+  triggerPipeline: (body: { symbols: string[]; train_start: string; train_end: string; val_start: string; val_end: string; strategies?: string[]; timeframe?: string; max_iterations?: number; convergence_threshold?: number }) =>
+    post<{ message: string; run_id: string }>("/api/v1/pipeline/run", body),
+  getPipelineStatus: () => get<{ running: boolean; current_iteration: number; win_rate_history: number[]; status: string; error?: string }>("/api/v1/pipeline/status"),
+  getPipelineReport: () => get<{ symbols: string[]; total_trades: number; total_wins: number; total_losses: number; avg_win_rate: number; avg_return: number }>("/api/v1/pipeline/report"),
+
+  // Memory stats
+  getMemoryStats: () => get<{ total_count: number; weekly_new: number; by_timeframe: Record<string, number> }>("/api/v1/stats"),
+  getCrossStats: (timeframe?: string) => get<{ data: Array<{ scenario: string; category: string; win_rate: number; sample_count: number }> }>(`/api/v1/stats/cross${timeframe ? `?timeframe=${encodeURIComponent(timeframe)}` : ""}`),
+
+  // Decision table
+  getDecisionTable: (timeframe?: string) => get<{ version: number; generated_at: string; timeframe: string; rules: Array<{ scenario: string; stock_category: string; action: string; stop_loss_pct: number; take_profit_pct: number; win_rate: number; sample_size: number; confidence: number }> }>(`/api/v1/decision-table${timeframe ? `?timeframe=${encodeURIComponent(timeframe)}` : ""}`),
+  getDecisionTableVersions: (timeframe?: string) => get<Array<{ version: number; generated_at: string }>>(`/api/v1/decision-table/versions${timeframe ? `?timeframe=${encodeURIComponent(timeframe)}` : ""}`),
 }
 
 // Types

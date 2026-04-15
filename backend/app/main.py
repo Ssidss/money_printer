@@ -27,7 +27,7 @@ from .models import (
     Site, MarketingCard,
 )
 from .routers import stocks, analysis, portfolio, backtest, sse, telegram, ai_notes, briefing, smc_v2
-from .routers import auth, scanner, backtest_vbt, marketing_cards
+from .routers import auth, scanner, backtest_vbt, marketing_cards, pipeline
 from .services.fetcher import ensure_stock_exists
 
 logger = logging.getLogger(__name__)
@@ -144,6 +144,7 @@ app.include_router(analysis.router, prefix="/api/v1")
 app.include_router(portfolio.router, prefix="/api/v1")
 app.include_router(backtest.router, prefix="/api/v1")
 app.include_router(backtest_vbt.router, prefix="/api/v1")
+app.include_router(pipeline.router)
 app.include_router(telegram.router, prefix="/api/v1")
 app.include_router(ai_notes.router, prefix="/api/v1")
 app.include_router(briefing.router, prefix="/api/v1")
