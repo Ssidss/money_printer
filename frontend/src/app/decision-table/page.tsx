@@ -52,6 +52,23 @@ export default function DecisionTablePage() {
     loadData()
   }, [activeTab])
 
+  // Load specific version when selectedVersion changes
+  useEffect(() => {
+    if (selectedVersion === null || !table) return
+
+    // Only reload if selectedVersion differs from current table version
+    if (selectedVersion !== table.version) {
+      (async () => {
+        try {
+          const versionTable = await api.getDecisionTable(activeTab, selectedVersion as number)
+          setTable(versionTable)
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Failed to load selected version")
+        }
+      })()
+    }
+  }, [selectedVersion, activeTab, table])
+
   async function handleGenerateNewVersion() {
     try {
       setGenerating(true)

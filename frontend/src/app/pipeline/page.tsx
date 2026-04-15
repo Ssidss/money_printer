@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { api } from "@/lib/api"
 import { usePipelineProgress } from "@/hooks/usePipelineProgress"
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts"
 
 interface PipelineFormData {
   symbols: string[]
@@ -47,22 +48,31 @@ export default function PipelinePage() {
 
   // Refresh status periodically
   useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const s = await api.getPipelineStatus()
-        setStatus(s)
-        setRunning(s.running)
+    let interval: ReturnType<typeof setInterval>
 
-        if (s.status === "completed") {
-          const r = await api.getPipelineReport()
-          setReport(r)
+    const startPolling = () => {
+      interval = setInterval(async () => {
+        try {
+          const s = await api.getPipelineStatus()
+          setStatus(s)
+          setRunning(s.running)
+
+          if (s.status === "completed") {
+            const r = await api.getPipelineReport()
+            setReport(r)
+            clearInterval(interval) // Stop polling when complete
+          }
+        } catch (e) {
+          console.error("Failed to fetch status", e)
         }
-      } catch (e) {
-        console.error("Failed to fetch status", e)
-      }
-    }, 2000)
+      }, 2000)
+    }
 
-    return () => clearInterval(interval)
+    startPolling()
+
+    return () => {
+      if (interval) clearInterval(interval)
+    }
   }, [])
 
   async function handleStart() {
@@ -74,6 +84,17 @@ export default function PipelinePage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start pipeline")
       setRunning(false)
+    }
+  }
+
+  async function handleStop() {
+    try {
+      setError(null)
+      await api.stopPipeline()
+      setRunning(false)
+      console.log("Pipeline stopped")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to stop pipeline")
     }
   }
 
@@ -199,17 +220,28 @@ export default function PipelinePage() {
 
             {error && <div className="p-3 bg-red-100 text-red-700 rounded-lg text-sm">{error}</div>}
 
-            <button
-              type="submit"
-              disabled={running}
-              className={`w-full py-2 rounded-lg font-medium text-white transition-colors ${
-                running
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-blue-600 hover:bg-blue-700"
-              }`}
-            >
-              {running ? "執行中..." : "啟動 Pipeline"}
-            </button>
+            <div className="flex gap-3">
+              <button
+                type="submit"
+                disabled={running}
+                className={`flex-1 py-2 rounded-lg font-medium text-white transition-colors ${
+                  running
+                    ? "bg-gray-400 cursor-not-allowed"
+                    : "bg-blue-600 hover:bg-blue-700"
+                }`}
+              >
+                {running ? "執行中..." : "啟動 Pipeline"}
+              </button>
+              {running && (
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  className="flex-1 py-2 rounded-lg font-medium text-white bg-red-600 hover:bg-red-700 transition-colors"
+                >
+                  停止 Pipeline
+                </button>
+              )}
+            </div>
           </form>
         </div>
 
@@ -219,7 +251,7 @@ export default function PipelinePage() {
           {status && (
             <div className="bg-white p-6 rounded-lg shadow mb-6">
               <h2 className="text-xl font-bold mb-4">狀態</h2>
-              <div className="space-y-3">
+              <div className="space-y-3 mb-6">
                 <div className="flex justify-between">
                   <span className="text-gray-600">狀態</span>
                   <span className={`font-semibold ${status.running ? "text-blue-600" : "text-green-600"}`}>
@@ -237,6 +269,32 @@ export default function PipelinePage() {
                   </div>
                 )}
               </div>
+
+              {/* 勝率趨勢圖 */}
+              {status.win_rate_history.length > 0 && (
+                <div className="mt-6">
+                  <h3 className="text-lg font-bold mb-4">勝率趨勢</h3>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={status.win_rate_history.map((rate, idx) => ({
+                      iteration: idx + 1,
+                      win_rate: Math.round(rate * 100 * 100) / 100 // Convert to percentage
+                    }))}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="iteration" label={{ value: "迭代次數", position: "insideBottomRight", offset: -5 }} />
+                      <YAxis label={{ value: "勝率 (%)", angle: -90, position: "insideLeft" }} domain={[0, 100]} />
+                      <Tooltip formatter={(value: number) => `${value.toFixed(2)}%`} />
+                      <Line
+                        type="monotone"
+                        dataKey="win_rate"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        dot={{ fill: "#3b82f6", r: 4 }}
+                        activeDot={{ r: 6 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
           )}
 
