@@ -47,7 +47,13 @@ class PostgreSQLManager:
         if db_port is not None:
             self.db_port = db_port
         else:
-            self.db_port = int(os.getenv("EMBEDDED_PG_PORT", "54330"))
+            port_str = os.getenv("EMBEDDED_PG_PORT", "54330")
+            try:
+                self.db_port = int(port_str)
+            except ValueError:
+                raise ValueError(
+                    f"EMBEDDED_PG_PORT 必須為整數，目前值: {port_str!r}"
+                )
         self.process: Optional[subprocess.Popen] = None
         self.use_embedded_postgres = False
         self._startup_attempted = False
@@ -253,7 +259,10 @@ class PostgreSQLManager:
 
         try:
             # 連接至預設 postgres 資料庫
-            dsn = f"postgresql://{self.db_user}{'@localhost' if not self.db_password else f':{self.db_password}@localhost'}:{self.db_port}/postgres"
+            if self.db_password:
+                dsn = f"postgresql://{self.db_user}:{self.db_password}@localhost:{self.db_port}/postgres"
+            else:
+                dsn = f"postgresql://{self.db_user}@localhost:{self.db_port}/postgres"
             conn = await asyncpg.connect(dsn)
             try:
                 # 檢查資料庫是否存在
@@ -270,5 +279,7 @@ class PostgreSQLManager:
             finally:
                 await conn.close()
         except Exception as e:
-            logger.error(f"確保資料庫存在失敗: {e}")
+            logger.error(
+                f"確保資料庫存在失敗: connect to {self.db_user}@localhost:{self.db_port} - {e}"
+            )
             raise
