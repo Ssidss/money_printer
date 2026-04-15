@@ -16,12 +16,19 @@ interface CrossStat {
   sample_count: number
 }
 
+const getWinRateColor = (winRate: number): string => {
+  if (winRate >= 0.6) return "#10b981"  // green-500
+  if (winRate >= 0.5) return "#eab308"  // yellow-500
+  return "#ef4444"  // red-500
+}
+
 export default function MemoryDashboard() {
   const [summary, setSummary] = useState<MemorySummary | null>(null)
   const [crossStats, setCrossStats] = useState<CrossStat[]>([])
   const [activeTab, setActiveTab] = useState("1d")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [hoveredCell, setHoveredCell] = useState<{ scenario: string; category: string } | null>(null)
 
   useEffect(() => {
     async function loadData() {
@@ -46,8 +53,12 @@ export default function MemoryDashboard() {
   if (loading) return <div className="p-8">加載中...</div>
   if (error) return <div className="p-8 text-red-500">錯誤: {error}</div>
 
+  // Get unique scenarios and categories for heatmap layout
+  const scenarios = Array.from(new Set(crossStats.map(s => s.scenario)))
+  const categories = Array.from(new Set(crossStats.map(s => s.category)))
+
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-8 max-w-7xl mx-auto">
       <h1 className="text-3xl font-bold mb-8">記憶儀表板</h1>
 
       {/* 統計卡片 */}
@@ -90,35 +101,97 @@ export default function MemoryDashboard() {
         ))}
       </div>
 
-      {/* 勝率熱力圖 */}
-      <div className="bg-white p-6 rounded-lg shadow">
+      {/* 勝率熱力圖（互動版） */}
+      <div className="bg-white p-6 rounded-lg shadow mb-8">
         <h2 className="text-xl font-bold mb-4">勝率熱力圖（場景 × 類別）</h2>
+        {crossStats.length === 0 ? (
+          <div className="text-gray-500 py-8">暫無資料</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <div className="inline-block min-w-full">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr>
+                    <th className="p-2 text-left font-semibold border">場景</th>
+                    {categories.map((cat) => (
+                      <th key={cat} className="p-2 text-center font-semibold border bg-gray-50">
+                        {cat}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {scenarios.map((scenario) => (
+                    <tr key={scenario}>
+                      <td className="p-2 font-medium border bg-gray-50">{scenario}</td>
+                      {categories.map((category) => {
+                        const stat = crossStats.find(s => s.scenario === scenario && s.category === category)
+                        const isHovered = hoveredCell?.scenario === scenario && hoveredCell?.category === category
+                        return (
+                          <td
+                            key={`${scenario}-${category}`}
+                            className={`p-2 text-center border cursor-pointer transition-all ${
+                              isHovered ? "ring-2 ring-blue-500" : ""
+                            }`}
+                            style={{ backgroundColor: stat ? `${getWinRateColor(stat.win_rate)}20` : "transparent" }}
+                            onMouseEnter={() => setHoveredCell({ scenario, category })}
+                            onMouseLeave={() => setHoveredCell(null)}
+                            title={stat ? `勝率: ${(stat.win_rate * 100).toFixed(1)}%, 樣本: ${stat.sample_count}` : "無資料"}
+                          >
+                            {stat ? (
+                              <div>
+                                <div className="font-semibold text-xs" style={{ color: getWinRateColor(stat.win_rate) }}>
+                                  {(stat.win_rate * 100).toFixed(1)}%
+                                </div>
+                                <div className="text-xs text-gray-600">
+                                  ({stat.sample_count})
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 詳細規則列表 */}
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h2 className="text-xl font-bold mb-4">詳細數據</h2>
         {crossStats.length === 0 ? (
           <div className="text-gray-500">暫無資料</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b">
-                  <th className="text-left p-2">場景</th>
-                  <th className="text-left p-2">類別</th>
-                  <th className="text-right p-2">勝率</th>
-                  <th className="text-right p-2">樣本數</th>
+                <tr className="border-b bg-gray-50">
+                  <th className="text-left p-3 font-semibold">場景</th>
+                  <th className="text-left p-3 font-semibold">類別</th>
+                  <th className="text-right p-3 font-semibold">勝率</th>
+                  <th className="text-right p-3 font-semibold">樣本數</th>
                 </tr>
               </thead>
               <tbody>
                 {crossStats.map((row, i) => (
                   <tr key={i} className="border-b hover:bg-gray-50">
-                    <td className="p-2">{row.scenario}</td>
-                    <td className="p-2">{row.category}</td>
-                    <td className="text-right p-2">
-                      <span className={`inline-block px-2 py-1 rounded text-white ${
-                        row.win_rate >= 0.6 ? 'bg-green-500' : row.win_rate >= 0.5 ? 'bg-yellow-500' : 'bg-red-500'
-                      }`}>
+                    <td className="p-3">{row.scenario}</td>
+                    <td className="p-3">{row.category}</td>
+                    <td className="text-right p-3">
+                      <span
+                        className="inline-block px-2 py-1 rounded text-white font-semibold"
+                        style={{ backgroundColor: getWinRateColor(row.win_rate) }}
+                      >
                         {(row.win_rate * 100).toFixed(1)}%
                       </span>
                     </td>
-                    <td className="text-right p-2">{row.sample_count}</td>
+                    <td className="text-right p-3">{row.sample_count}</td>
                   </tr>
                 ))}
               </tbody>

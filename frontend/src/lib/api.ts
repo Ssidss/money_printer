@@ -277,6 +277,8 @@ export const api = {
   // Decision table
   getDecisionTable: (timeframe?: string) => get<{ version: number; generated_at: string; timeframe: string; rules: Array<{ scenario: string; stock_category: string; action: string; stop_loss_pct: number; take_profit_pct: number; win_rate: number; sample_size: number; confidence: number }> }>(`/api/v1/decision-table${timeframe ? `?timeframe=${encodeURIComponent(timeframe)}` : ""}`),
   getDecisionTableVersions: (timeframe?: string) => get<Array<{ version: number; generated_at: string }>>(`/api/v1/decision-table/versions${timeframe ? `?timeframe=${encodeURIComponent(timeframe)}` : ""}`),
+  triggerReflect: () => post<{ message: string }>("/api/v1/memory/reflect", {}),
+  triggerGenerateTable: (timeframe?: string) => post<{ message: string; version: number }>(`/api/v1/memory/generate-table${timeframe ? `?timeframe=${encodeURIComponent(timeframe)}` : ""}`, {}),
 }
 
 // Types

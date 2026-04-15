@@ -28,6 +28,8 @@ export default function DecisionTablePage() {
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [generating, setGenerating] = useState(false)
+  const [generationError, setGenerationError] = useState<string | null>(null)
 
   useEffect(() => {
     async function loadData() {
@@ -50,6 +52,38 @@ export default function DecisionTablePage() {
     loadData()
   }, [activeTab])
 
+  async function handleGenerateNewVersion() {
+    try {
+      setGenerating(true)
+      setGenerationError(null)
+
+      // Step 1: Trigger reflection
+      await api.triggerReflect()
+
+      // Step 2: Generate decision table
+      await api.triggerGenerateTable(activeTab)
+
+      // Step 3: Reload data after a short delay to let backend process
+      setTimeout(async () => {
+        try {
+          const [table, versions] = await Promise.all([
+            api.getDecisionTable(activeTab),
+            api.getDecisionTableVersions(activeTab),
+          ])
+          setTable(table)
+          setVersions(versions)
+          setSelectedVersion(table.version)
+        } catch (e) {
+          console.error("Failed to reload table after generation", e)
+        }
+      }, 2000)
+    } catch (e) {
+      setGenerationError(e instanceof Error ? e.message : "Failed to generate new version")
+    } finally {
+      setGenerating(false)
+    }
+  }
+
   if (loading) return <div className="p-8">加載中...</div>
   if (error) return <div className="p-8 text-red-500">錯誤: {error}</div>
 
@@ -62,11 +96,12 @@ export default function DecisionTablePage() {
           <button
             key={tf}
             onClick={() => setActiveTab(tf)}
+            disabled={generating}
             className={`px-4 py-2 rounded-lg font-medium transition-colors ${
               activeTab === tf
                 ? "bg-blue-600 text-white"
                 : "bg-gray-200 text-gray-800 hover:bg-gray-300"
-            }`}
+            } ${generating ? "opacity-50 cursor-not-allowed" : ""}`}
           >
             {tf}
           </button>
@@ -75,21 +110,35 @@ export default function DecisionTablePage() {
 
       {table && (
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center gap-4">
             <div>
               <p className="text-sm text-gray-600">當前版本</p>
               <p className="text-xl font-bold">版本 {table.version}</p>
               <p className="text-sm text-gray-600">{new Date(table.generated_at).toLocaleString("zh-TW")}</p>
             </div>
-            <button className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-              生成新版本
+            <button
+              onClick={handleGenerateNewVersion}
+              disabled={generating}
+              className={`px-6 py-2 rounded-lg font-medium text-white transition-colors ${
+                generating
+                  ? "bg-gray-400 cursor-not-allowed"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
+            >
+              {generating ? "生成中..." : "生成新版本"}
             </button>
           </div>
+
+          {generationError && (
+            <div className="mt-4 p-3 bg-red-100 text-red-700 rounded text-sm">
+              {generationError}
+            </div>
+          )}
         </div>
       )}
 
       {/* 規則表格 */}
-      <div className="bg-white p-6 rounded-lg shadow overflow-x-auto">
+      <div className="bg-white p-6 rounded-lg shadow overflow-x-auto mb-8">
         <h2 className="text-xl font-bold mb-4">規則清單</h2>
         {table?.rules && table.rules.length > 0 ? (
           <table className="w-full text-sm border-collapse">
@@ -135,7 +184,7 @@ export default function DecisionTablePage() {
 
       {/* 版本歷史 */}
       {versions.length > 0 && (
-        <div className="mt-8 bg-white p-6 rounded-lg shadow">
+        <div className="bg-white p-6 rounded-lg shadow">
           <h2 className="text-xl font-bold mb-4">版本歷史</h2>
           <div className="flex gap-2 flex-wrap">
             {versions.map((v) => (

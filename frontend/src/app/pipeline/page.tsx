@@ -16,6 +16,15 @@ interface PipelineFormData {
   convergence_threshold: number
 }
 
+interface ValidationReport {
+  symbols: string[]
+  total_trades: number
+  total_wins: number
+  total_losses: number
+  avg_win_rate: number
+  avg_return: number
+}
+
 export default function PipelinePage() {
   const [formData, setFormData] = useState<PipelineFormData>({
     symbols: ["2330", "2454"],
@@ -30,7 +39,7 @@ export default function PipelinePage() {
   })
 
   const [status, setStatus] = useState<{ running: boolean; current_iteration: number; win_rate_history: number[]; status: string } | null>(null)
-  const [report, setReport] = useState<any>(null)
+  const [report, setReport] = useState<ValidationReport | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
