@@ -293,6 +293,12 @@ def _build_registry():
     except (ImportError, ModuleNotFoundError) as e:
         logger.warning(f"Could not import MockStrategy: {e}")
 
+    try:
+        from .strategies.decision_table_strategy import DecisionTableStrategy
+        registry["decision_table"] = DecisionTableStrategy
+    except (ImportError, ModuleNotFoundError) as e:
+        logger.warning(f"Could not import DecisionTableStrategy: {e}")
+
     return registry
 
 
@@ -526,6 +532,8 @@ async def run_vbt_backtest(
     initial_capital: float = 100_000,
     strategy_name: str = "smc_v2",
     strategy_params: Optional[dict] = None,
+    save_to_memory: bool = False,
+    timeframe: str = "1d",
 ) -> dict:
     """
     執行策略 VectorBT 回測（通用入口，從 STRATEGY_REGISTRY lookup 策略）。
@@ -538,6 +546,8 @@ async def run_vbt_backtest(
         initial_capital: 初始資金
         strategy_name:   策略名稱（必須在 STRATEGY_REGISTRY 中）
         strategy_params: 可選覆蓋策略預設參數的 dict
+        save_to_memory:  是否將回測結果寫入記憶引擎
+        timeframe:       時間框架（預設 "1d"），用於記憶引擎
 
     Returns:
         dict 格式的 BacktestResult（可直接序列化為 JSON）
@@ -758,6 +768,38 @@ async def run_vbt_backtest(
         signals_generated=signals_count,
         elapsed_seconds=elapsed,
     )
+
+    # ── Step 7: 可選：寫入記憶引擎 ─────────────────────────────────────────
+    if save_to_memory:
+        try:
+            from .memory_converter import convert_vbt_result_to_memories
+            from .memory_client import MemoryEngineClient
+
+            # 提取回測期間的 OHLCV
+            ohlcv_df = price_df.loc[period_mask].copy()
+
+            # 構建 VBT result dict for conversion
+            vbt_result = {
+                'trades': trades_list,
+                'total_return_pct': total_return,
+                'sharpe_ratio': sharpe,
+                'max_drawdown_pct': max_dd,
+                'win_rate': win_rate,
+            }
+
+            memory_client = MemoryEngineClient()
+            count = await convert_vbt_result_to_memories(
+                vbt_result=vbt_result,
+                symbol=ticker,
+                strategy_name=strategy_name,
+                timeframe=timeframe,
+                ohlcv_df=ohlcv_df,
+                memory_client=memory_client,
+                market=market,
+            )
+            logger.info(f"Saved {count} trades to memory engine for {ticker}/{strategy_name}")
+        except Exception as e:
+            logger.warning(f"Failed to save backtest results to memory engine: {e}")
 
     return _result_to_dict(result)
 
