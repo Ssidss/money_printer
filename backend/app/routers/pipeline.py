@@ -103,12 +103,14 @@ async def trigger_pipeline(req: PipelineRunRequest, background_tasks: Background
     """
     global _current_run
 
-    # 檢查是否已有 pipeline 運行中
-    if _pipeline_lock.locked():
+    # 檢查是否已有 pipeline 運行中（原子操作：嘗試取得 lock）
+    if not _pipeline_lock.acquire_nowait():
         raise HTTPException(
             status_code=409,
             detail="Pipeline is already running. Wait for completion or check /pipeline/status"
         )
+    # 立即 release，由背景任務重新取得
+    _pipeline_lock.release()
 
     # 解析日期
     try:

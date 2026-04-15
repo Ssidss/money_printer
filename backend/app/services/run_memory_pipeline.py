@@ -9,6 +9,7 @@ Memory Pipeline — 回測迭代管道
 
 import asyncio
 import logging
+import uuid
 from datetime import date
 from typing import Optional, Callable, Any
 
@@ -70,7 +71,7 @@ async def run_pipeline(
             'error': str (if failed)
         }
     """
-    run_id = "pipeline-" + str(asyncio.current_task()).split()[-1][:8]
+    run_id = f"pipeline-{uuid.uuid4().hex[:8]}"
     info = PipelineRunInfo(run_id)
 
     try:
@@ -105,77 +106,79 @@ async def run_pipeline(
 
         client = MemoryEngineClient()
         prev_win_rate = 0
+        try:
+            for iteration in range(max_iterations):
+                info.current_iteration = iteration + 1
 
-        for iteration in range(max_iterations):
-            info.current_iteration = iteration + 1
-
-            # 反思
-            await _emit(f"迭代 {iteration + 1}: 觸發反思...", iteration=iteration + 1)
-            try:
-                reflect_result = await client.trigger_reflect()
-                logger.info(f"Reflect result: {reflect_result}")
-            except Exception as e:
-                logger.warning(f"Reflect failed: {e}")
-                # 繼續，不中斷迭代
-
-            # 生成決策表
-            await _emit(f"迭代 {iteration + 1}: 生成決策表...", iteration=iteration + 1)
-            try:
-                gen_result = await client.trigger_generate_table(timeframes=[timeframe])
-                logger.info(f"Generate table result: {gen_result}")
-            except Exception as e:
-                logger.warning(f"Generate table failed: {e}")
-                # 繼續，不中斷迭代
-
-            # 用決策表跑回測
-            await _emit(f"迭代 {iteration + 1}: 用決策表回測...", iteration=iteration + 1)
-            iteration_results = []
-
-            for symbol in symbols:
+                # 反思
+                await _emit(f"迭代 {iteration + 1}: 觸發反思...", iteration=iteration + 1)
                 try:
-                    result = await run_vbt_backtest(
-                        ticker=symbol,
-                        start_date=train_start,
-                        end_date=train_end,
-                        strategy_name="decision_table",
-                        save_to_memory=True,
-                        timeframe=timeframe,
-                    )
-                    if "error" not in result:
-                        iteration_results.append(result)
-                        await _emit(
-                            f"迭代 {iteration + 1}: {symbol} 完成",
-                            ticker=symbol,
-                            iteration=iteration + 1
-                        )
+                    reflect_result = await client.trigger_reflect()
+                    logger.info(f"Reflect result: {reflect_result}")
                 except Exception as e:
-                    logger.warning(f"Iteration {iteration + 1} backtest failed: {symbol}: {e}")
+                    logger.warning(f"Reflect failed: {e}")
+                    # 繼續，不中斷迭代
 
-            # 獲取統計資訊（勝率）
-            try:
-                stats = await client.get_stats(group_by="overall")
-                current_win_rate = stats.get("win_rate", 0)
-                info.win_rate_history.append(current_win_rate)
+                # 生成決策表
+                await _emit(f"迭代 {iteration + 1}: 生成決策表...", iteration=iteration + 1)
+                try:
+                    gen_result = await client.trigger_generate_table(timeframes=[timeframe])
+                    logger.info(f"Generate table result: {gen_result}")
+                except Exception as e:
+                    logger.warning(f"Generate table failed: {e}")
+                    # 繼續，不中斷迭代
 
-                await _emit(
-                    f"迭代 {iteration + 1} 完成：勝率 {current_win_rate:.2%}",
-                    iteration=iteration + 1,
-                    win_rate=current_win_rate
-                )
+                # 用決策表跑回測
+                await _emit(f"迭代 {iteration + 1}: 用決策表回測...", iteration=iteration + 1)
+                iteration_results = []
 
-                # 檢查收斂
-                if iteration > 0 and abs(current_win_rate - prev_win_rate) < convergence_threshold:
+                for symbol in symbols:
+                    try:
+                        result = await run_vbt_backtest(
+                            ticker=symbol,
+                            start_date=train_start,
+                            end_date=train_end,
+                            strategy_name="decision_table",
+                            save_to_memory=True,
+                            timeframe=timeframe,
+                        )
+                        if "error" not in result:
+                            iteration_results.append(result)
+                            await _emit(
+                                f"迭代 {iteration + 1}: {symbol} 完成",
+                                ticker=symbol,
+                                iteration=iteration + 1
+                            )
+                    except Exception as e:
+                        logger.warning(f"Iteration {iteration + 1} backtest failed: {symbol}: {e}")
+
+                # 獲取統計資訊（勝率）
+                try:
+                    stats = await client.get_stats(group_by="overall")
+                    current_win_rate = stats.get("win_rate", 0)
+                    info.win_rate_history.append(current_win_rate)
+
                     await _emit(
-                        f"迭代 {iteration + 1}: 已收斂（勝率變動 {abs(current_win_rate - prev_win_rate):.2%} < {convergence_threshold:.2%}）",
-                        converged=True
+                        f"迭代 {iteration + 1} 完成：勝率 {current_win_rate:.2%}",
+                        iteration=iteration + 1,
+                        win_rate=current_win_rate
                     )
-                    break
 
-                prev_win_rate = current_win_rate
-            except Exception as e:
-                logger.warning(f"Failed to get stats: {e}")
+                    # 檢查收斂
+                    if iteration > 0 and abs(current_win_rate - prev_win_rate) < convergence_threshold:
+                        await _emit(
+                            f"迭代 {iteration + 1}: 已收斂（勝率變動 {abs(current_win_rate - prev_win_rate):.2%} < {convergence_threshold:.2%}）",
+                            converged=True
+                        )
+                        break
 
-        await _emit("[Phase 2] 迭代完成", phase="phase2_done")
+                    prev_win_rate = current_win_rate
+                except Exception as e:
+                    logger.warning(f"Failed to get stats: {e}")
+
+            await _emit("[Phase 2] 迭代完成", phase="phase2_done")
+        finally:
+            await client.close()
 
         # ── Phase 3: 驗證 ──────────────────────────────────────────────────
         await _emit("[Phase 3] 驗證：用獨立驗證集測試（不寫記憶）", phase="phase3")
@@ -205,11 +208,14 @@ async def run_pipeline(
 
         # ── 完成 ────────────────────────────────────────────────────────────
         info.status = "completed"
+        # converged = True 當迭代次數 < max_iterations（即提前停止了）
+        converged = info.current_iteration < max_iterations
+
         await sse_manager.broadcast("pipeline_complete", {
             "status": "completed",
             "iterations": info.current_iteration,
             "win_rate_history": info.win_rate_history,
-            "converged": info.current_iteration < max_iterations,
+            "converged": converged,
             "validation_report": validation_report,
         })
 
@@ -217,7 +223,7 @@ async def run_pipeline(
             "status": "completed",
             "iterations": info.current_iteration,
             "win_rate_history": info.win_rate_history,
-            "converged": info.current_iteration < max_iterations,
+            "converged": converged,
             "validation_report": validation_report,
         }
 
