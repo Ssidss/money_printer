@@ -361,7 +361,9 @@ async def _run_pipeline_background(
             if _current_run is not None:
                 run_id = _current_run.get("run_id")
                 _current_run.update(result)
-                _current_run["status"] = result.get("status", "unknown")
+                # 若已被 stop 端點設為 stopped，不被 cancelled 覆寫
+                if _current_run.get("status") != "stopped":
+                    _current_run["status"] = result.get("status", "unknown")
 
             # 更新數據庫中的狀態
             if run_id:

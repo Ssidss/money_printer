@@ -85,6 +85,22 @@ async def run_pipeline(
 
         for strategy in strategies:
             for symbol in symbols:
+                # 檢查取消信號
+                if cancel_event and cancel_event.is_set():
+                    await _emit("[Phase 1] Pipeline 已被停止", phase="phase1_stopped")
+                    info.status = "stopped"
+                    await sse_manager.broadcast("pipeline_stopped", {
+                        "status": "stopped",
+                        "iterations": info.current_iteration,
+                    })
+                    return {
+                        "status": "stopped",
+                        "iterations": info.current_iteration,
+                        "win_rate_history": info.win_rate_history,
+                        "converged": False,
+                        "validation_report": None,
+                    }
+
                 try:
                     result = await run_vbt_backtest(
                         ticker=symbol,
@@ -116,15 +132,15 @@ async def run_pipeline(
             for iteration in range(max_iterations):
                 # 檢查取消信號
                 if cancel_event and cancel_event.is_set():
-                    await _emit("[Phase 2] Pipeline 已被停止", phase="phase2_cancelled")
-                    info.status = "cancelled"
+                    await _emit("[Phase 2] Pipeline 已被停止", phase="phase2_stopped")
+                    info.status = "stopped"
                     converged = False
-                    await sse_manager.broadcast("pipeline_cancelled", {
-                        "status": "cancelled",
+                    await sse_manager.broadcast("pipeline_stopped", {
+                        "status": "stopped",
                         "iterations": info.current_iteration,
                     })
                     return {
-                        "status": "cancelled",
+                        "status": "stopped",
                         "iterations": info.current_iteration,
                         "win_rate_history": info.win_rate_history,
                         "converged": False,
@@ -206,6 +222,22 @@ async def run_pipeline(
 
         # ── Phase 3: 驗證 ──────────────────────────────────────────────────
         await _emit("[Phase 3] 驗證：用獨立驗證集測試（不寫記憶）", phase="phase3")
+
+        # 檢查取消信號
+        if cancel_event and cancel_event.is_set():
+            await _emit("[Phase 3] Pipeline 已被停止", phase="phase3_stopped")
+            info.status = "stopped"
+            await sse_manager.broadcast("pipeline_stopped", {
+                "status": "stopped",
+                "iterations": info.current_iteration,
+            })
+            return {
+                "status": "stopped",
+                "iterations": info.current_iteration,
+                "win_rate_history": info.win_rate_history,
+                "converged": False,
+                "validation_report": None,
+            }
 
         validation_results = []
         for symbol in symbols:
