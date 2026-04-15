@@ -263,7 +263,6 @@ export const api = {
     get<AiNote[]>(`/api/v1/ai-notes${ticker ? `?ticker=${encodeURIComponent(ticker)}&limit=${limit}` : `?limit=${limit}`}`),
   aiNotesLatest: () => get<Record<string, AiNoteLatest>>("/api/v1/ai-notes/latest"),
   aiNote: (id: number) => get<AiNote>(`/api/v1/ai-notes/${id}`),
-  strategyMemory: () => get<StrategyMemoryResponse>("/api/v1/ai-notes/strategy-memory"),
 }
 
 // Types
@@ -436,25 +435,6 @@ export type AiNote = {
 export type AiNoteLatest = {
   id: number; recommendation: string; action: string | null
   analysis_type: string; created_at: string; summary_preview: string
-}
-
-// Strategy Memory Types
-export type FailurePattern = {
-  condition: string
-  failure_rate: number; avg_loss_pct: number
-  warning: string
-}
-
-export type StrategyPattern = {
-  smc_trend: string; recommendation: string
-  sample_count: number; win_rate: number
-  avg_return_pct: number; risk_level: string
-}
-
-export type StrategyMemoryResponse = {
-  total_analyzed: number
-  top_failure_patterns: FailurePattern[]
-  patterns: StrategyPattern[]
 }
 
 // ── SMC v2 Types ──────────────────────────────────────────────

@@ -132,40 +132,6 @@ curl -X POST http://localhost:8000/api/v1/ai-notes \
 
 這樣用戶可以在個股頁面看到 AI 分析歷史記錄、時間戳、和上次推薦。
 
-## Step 6.5: 載入歷史記憶 context（可選，用於調整信心度）
-
-在分析前或分析過程中，可以查詢該市況 + 推薦等級的歷史績效，自動調整信心度：
-
-```bash
-curl "http://localhost:8000/api/v1/ai-notes/memory-context?smc_trend=上升趨勢&recommendation_hint=推薦" \
-  -H "Content-Type: application/json"
-```
-
-**回傳範例：**
-```json
-{
-  "has_memory": true,
-  "confidence_adjustment": 0.15,
-  "warnings": [],
-  "historical_pattern": {
-    "smc_trend": "上升趨勢",
-    "recommendation": "推薦",
-    "win_rate": 0.75,
-    "avg_return_pct": 4.2,
-    "sample_count": 20
-  },
-  "context_summary": "在此市況下此推薦等級的歷史績效良好（勝率 75%，平均回報 4.20%，樣本 20 筆）"
-}
-```
-
-**邏輯説明：**
-- `has_memory`: 樣本數 ≥ 5 時為 true（資料足夠）
-- `confidence_adjustment`: (win_rate - 0.5) × 0.3（用於調整 AI 推薦的信心度）
-  - 勝率 75% → 調整值 +0.075（增強信心）
-  - 勝率 30% → 調整值 -0.06（降低信心）
-- `warnings`: 勝率 < 40% 或平均回報 < -3% 時觸發警告
-- `context_summary`: 人類可讀的市況總結
-
 ## 重要原則
 
 1. **不追高** — 如果現價已遠離建議買入價（>5%），建議等回調
