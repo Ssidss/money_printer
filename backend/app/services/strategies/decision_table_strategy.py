@@ -179,7 +179,7 @@ def _build_indicators_snapshot(ohlcv) -> dict:
             )
             if macd is not None and len(macd) > 0:
                 indicators['macd'] = float(macd.iloc[-1])
-        except:
+        except Exception:
             pass
 
         # 布林帶
@@ -192,14 +192,14 @@ def _build_indicators_snapshot(ohlcv) -> dict:
                 bb_position = (close[-1] - bb.iloc[-1, 2]) / (bb.iloc[-1, 0] - bb.iloc[-1, 2])
                 indicators['bb_position'] = float(bb_position) if 0 <= bb_position <= 1 else 0
 
-        except:
+        except Exception:
             pass
 
         # 成交量趨勢
         try:
             vol_trend = 'increasing' if volume[-1] > volume[-5:].mean() else 'decreasing'
             indicators['volume_trend'] = vol_trend
-        except:
+        except Exception:
             pass
 
         return indicators
