@@ -20,8 +20,8 @@ class Settings(BaseSettings):
 
     @property
     def embedded_db_mode(self) -> bool:
-        """是否使用嵌入式 PostgreSQL（當 DB_HOST 為 None 時）"""
-        return self.DB_HOST is None
+        """是否使用嵌入式 PostgreSQL（當 DB_HOST 為 None 或空字串時）"""
+        return not self.DB_HOST
 
     @property
     def DATABASE_URL(self) -> str:
