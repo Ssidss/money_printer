@@ -234,6 +234,51 @@ class TestPipelineReportEndpoint:
         assert data == report_data
 
 
+class TestPipelineStopEndpoint:
+    """POST /api/v1/pipeline/stop 端點測試"""
+
+    def test_stop_running_pipeline(self):
+        """測試停止運行中的 pipeline"""
+        running_state = {
+            "run_id": "pipeline-test-123",
+            "status": "running",
+            "current_iteration": 2,
+            "win_rate_history": [0.45, 0.48],
+            "error": None,
+        }
+
+        with patch("backend.app.routers.pipeline._current_run", running_state):
+            response = client.post("/api/v1/pipeline/stop")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["message"] == "Pipeline stopped"
+        assert data["status"] == "stopped"
+
+    def test_stop_when_no_pipeline_running(self):
+        """測試當沒有 pipeline 運行時停止"""
+        with patch("backend.app.routers.pipeline._current_run", None):
+            response = client.post("/api/v1/pipeline/stop")
+
+        assert response.status_code == 409
+        assert "not running" in response.json()["detail"].lower()
+
+    def test_stop_already_completed_pipeline(self):
+        """測試停止已完成的 pipeline"""
+        completed_state = {
+            "run_id": "pipeline-test-123",
+            "status": "completed",
+            "current_iteration": 3,
+            "win_rate_history": [0.45, 0.48, 0.50],
+        }
+
+        with patch("backend.app.routers.pipeline._current_run", completed_state):
+            response = client.post("/api/v1/pipeline/stop")
+
+        assert response.status_code == 409
+        assert "not running" in response.json()["detail"].lower()
+
+
 class TestPipelineRequestValidation:
     """Pipeline 請求驗證測試"""
 

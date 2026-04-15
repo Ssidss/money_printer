@@ -5,6 +5,7 @@ Endpoints:
   POST /api/v1/pipeline/run    — 啟動 pipeline（背景執行）
   GET  /api/v1/pipeline/status — 查詢當前狀態
   GET  /api/v1/pipeline/report — 取得最新驗證報告
+  POST /api/v1/pipeline/stop   — 停止運行中的 pipeline
 """
 
 import asyncio
@@ -15,6 +16,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel, field_validator
+
+from ..sse.manager import sse_manager
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +60,7 @@ class PipelineStatus(BaseModel):
     running: bool
     current_iteration: int
     win_rate_history: list[float]
-    status: str  # "idle" | "running" | "completed" | "failed"
+    status: str  # "idle" | "running" | "completed" | "failed" | "stopped"
     error: Optional[str] = None
 
 
@@ -75,6 +78,7 @@ class PipelineReport(BaseModel):
 
 _pipeline_lock = asyncio.Lock()
 _current_run: Optional[dict] = None  # { 'status', 'iterations', 'win_rate_history', ... }
+_cancel_event = asyncio.Event()  # 用於停止信號
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -109,7 +113,7 @@ async def trigger_pipeline(req: PipelineRunRequest, background_tasks: Background
     }
     ```
     """
-    global _current_run
+    global _current_run, _cancel_event
 
     # 檢查是否已有 pipeline 運行中（使用同步全域狀態作為原子判斷）
     # asyncio 單執行緒保證此判斷為原子操作
@@ -133,6 +137,9 @@ async def trigger_pipeline(req: PipelineRunRequest, background_tasks: Background
         raise HTTPException(status_code=400, detail="train_end must be after train_start")
     if val_end <= val_start:
         raise HTTPException(status_code=400, detail="val_end must be after val_start")
+
+    # 重置 cancel event
+    _cancel_event.clear()
 
     run_id = f"pipeline-{uuid.uuid4().hex[:8]}"
     _current_run = {
@@ -232,6 +239,53 @@ async def get_pipeline_report() -> dict:
     return _current_run["validation_report"]
 
 
+@router.post("/stop")
+async def stop_pipeline():
+    """
+    停止運行中的 Pipeline。
+
+    如果沒有 pipeline 運行中，返回 409。
+    如果成功停止，返回 200 並設置取消信號。
+
+    Pipeline 會在下一個迴圈檢查點停止。
+
+    Response:
+    ```json
+    {
+      "message": "Pipeline stopped",
+      "status": "stopped"
+    }
+    ```
+    """
+    global _current_run, _cancel_event
+
+    # 檢查是否有運行中的 pipeline
+    if _current_run is None or _current_run.get("status") != "running":
+        raise HTTPException(
+            status_code=409,
+            detail="Pipeline is not running"
+        )
+
+    # 設置取消信號
+    _cancel_event.set()
+
+    # 更新狀態為 stopped
+    _current_run["status"] = "stopped"
+
+    logger.info("Pipeline stop requested")
+
+    # 發送停止事件
+    await sse_manager.broadcast("pipeline_stop_requested", {
+        "status": "stop_requested",
+        "run_id": _current_run.get("run_id"),
+    })
+
+    return {
+        "message": "Pipeline stopped",
+        "status": "stopped",
+    }
+
+
 # ── Background Task ───────────────────────────────────────────────────────────
 
 async def _run_pipeline_background(
@@ -246,7 +300,7 @@ async def _run_pipeline_background(
     convergence_threshold: float,
 ):
     """背景執行 Pipeline"""
-    global _current_run
+    global _current_run, _cancel_event
 
     async with _pipeline_lock:
         try:
@@ -262,6 +316,7 @@ async def _run_pipeline_background(
                 timeframe=timeframe,
                 max_iterations=max_iterations,
                 convergence_threshold=convergence_threshold,
+                cancel_event=_cancel_event,
             )
 
             # 更新全域狀態
@@ -276,3 +331,6 @@ async def _run_pipeline_background(
             if _current_run is not None:
                 _current_run["status"] = "failed"
                 _current_run["error"] = str(e)
+        finally:
+            # 清除 cancel event 供下次使用
+            _cancel_event.clear()

@@ -41,6 +41,7 @@ async def run_pipeline(
     timeframe: str,
     max_iterations: int = 5,
     convergence_threshold: float = 0.02,
+    cancel_event: asyncio.Event = None,
 ) -> dict:
     """
     執行完整的回測迭代 Pipeline。
@@ -60,10 +61,11 @@ async def run_pipeline(
         timeframe: 時間框架（如 "1d", "4h"）
         max_iterations: 最大迭代次數
         convergence_threshold: 勝率變動閾值（如 0.02 = 2%）
+        cancel_event: 取消信號（若被 set，pipeline 停止）
 
     Returns:
         {
-            'status': 'completed' | 'failed',
+            'status': 'completed' | 'failed' | 'cancelled',
             'iterations': int,
             'win_rate_history': list,
             'converged': bool,
@@ -112,6 +114,23 @@ async def run_pipeline(
         prev_win_rate = 0
         try:
             for iteration in range(max_iterations):
+                # 檢查取消信號
+                if cancel_event and cancel_event.is_set():
+                    await _emit("[Phase 2] Pipeline 已被停止", phase="phase2_cancelled")
+                    info.status = "cancelled"
+                    converged = False
+                    await sse_manager.broadcast("pipeline_cancelled", {
+                        "status": "cancelled",
+                        "iterations": info.current_iteration,
+                    })
+                    return {
+                        "status": "cancelled",
+                        "iterations": info.current_iteration,
+                        "win_rate_history": info.win_rate_history,
+                        "converged": False,
+                        "validation_report": None,
+                    }
+
                 info.current_iteration = iteration + 1
 
                 # 反思
