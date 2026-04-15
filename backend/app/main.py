@@ -22,12 +22,12 @@ from .embedded_postgres import PostgreSQLManager
 from .models import (
     User,
     Stock, PriceHistory, AnalysisResult, NewsArticle,
-    PortfolioTransaction, PortfolioHolding, BacktestResult, BacktestResultV3,
+    PortfolioTransaction, PortfolioHolding, BacktestResult,
     AiAnalysisNote,
-    StrategyProfile, BacktestResultV2, BacktestTrade, BacktestEquity, StrategySignal,
+    Site, MarketingCard,
 )
 from .routers import stocks, analysis, portfolio, backtest, sse, telegram, ai_notes, briefing, smc_v2
-from .routers import strategies, backtest_v2, backtest_v3, auth, scanner, signals, backtest_vbt
+from .routers import auth, scanner, backtest_vbt, marketing_cards
 from .services.fetcher import ensure_stock_exists
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,14 @@ async def _run_migrations():
     from migrate_kina260_ai_notes_results import migrate as migrate_kina260
     await migrate_kina260()
     logger.info("✓ 遷移 KINA-260 完成")
+
+    from migrate_kina284_sites import migrate as migrate_kina284
+    await migrate_kina284()
+    logger.info("✓ 遷移 KINA-284 (sites) 完成")
+
+    from migrate_kina289_marketing_cards import migrate as migrate_kina289
+    await migrate_kina289()
+    logger.info("✓ 遷移 KINA-289 (marketing_cards) 完成")
 
 
 @asynccontextmanager
@@ -141,14 +149,12 @@ app.include_router(ai_notes.router, prefix="/api/v1")
 app.include_router(briefing.router, prefix="/api/v1")
 app.include_router(scanner.router, prefix="/api/v1")
 
+# ── admin routes ──────────────────────────────────────────────────────
+app.include_router(marketing_cards.router, prefix="/api/admin")
+
 # ── v2 routes ────────────────────────────────────────────────────────
 app.include_router(smc_v2.router, prefix="/api/v2")
-app.include_router(strategies.router, prefix="/api/v2")
-app.include_router(backtest_v2.router, prefix="/api/v2")
 
-# ── v3 routes ────────────────────────────────────────────────────────
-app.include_router(backtest_v3.router, prefix="/api/v3")
-app.include_router(signals.router, prefix="/api/v3")
 
 # ── SSE ──────────────────────────────────────────────────────────────
 app.include_router(sse.router)

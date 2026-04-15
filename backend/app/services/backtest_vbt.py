@@ -27,6 +27,69 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+
+# ── HistoricalProvider (minimal implementation for VBT) ──────────────────────
+
+class HistoricalProvider:
+    """
+    Minimal data provider for strategy signal generation.
+    Replaced from deleted backtest_v3.provider.HistoricalProvider.
+    """
+
+    def __init__(self, price_data: dict, stocks_info: list, start_date: date, end_date: date,
+                 min_bars: int = 60, min_volume: float = 0):
+        self.price_data = price_data  # {ticker: price_df}
+        self.stocks_info = stocks_info
+        self.start_date = start_date
+        self.end_date = end_date
+        self.min_bars = min_bars
+        self.min_volume = min_volume
+
+        # Current day index
+        self._all_dates = None
+        self._current_idx = -1
+        self._current_date = None
+
+        # Initialize dates from first ticker's data
+        if price_data:
+            first_df = next(iter(price_data.values()))
+            self._all_dates = sorted(first_df.index.unique())
+
+    def advance_day(self) -> Optional[date]:
+        """Advance to next trading day. Returns the date or None if at end."""
+        if self._all_dates is None:
+            return None
+
+        self._current_idx += 1
+        if self._current_idx >= len(self._all_dates):
+            return None
+
+        ts = self._all_dates[self._current_idx]
+        self._current_date = ts.date() if hasattr(ts, 'date') else ts
+
+        return self._current_date
+
+    def get_ohlcv(self, ticker: str) -> Optional[pd.DataFrame]:
+        """Get OHLCV data up to current date (prevents look-ahead bias)."""
+        if ticker not in self.price_data or self._current_date is None:
+            return None
+
+        df = self.price_data[ticker]
+        mask = pd.to_datetime(df.index) <= pd.Timestamp(self._current_date)
+        result = df[mask]
+
+        if len(result) < self.min_bars:
+            return None
+
+        return result
+
+    def get_latest_price(self, ticker: str) -> Optional[float]:
+        """Get the latest close price up to current date."""
+        ohlcv = self.get_ohlcv(ticker)
+        if ohlcv is None or ohlcv.empty:
+            return None
+        return float(ohlcv['Close'].iloc[-1])
+
 # ── Cost constants ────────────────────────────────────────────────────────────
 
 # US market: round-trip ~0.11% (0.05% slippage×2 + SEC fee ~0.00278%)
@@ -41,17 +104,41 @@ _TW_SLIPPAGE = 0.001
 # ── Strategy Registry ─────────────────────────────────────────────────────────
 
 def _build_registry():
-    from .strategies.smc_strategy import SMCStrategy
-    from .strategies.momentum_breakout import MomentumBreakoutStrategy
-    from .strategies.explosion_scanner import ExplosionScannerStrategy
-    from .strategies.mock_strategy import MockStrategy
+    """
+    Build strategy registry dynamically.
 
-    return {
-        "smc_v2": SMCStrategy,
-        "momentum_breakout": MomentumBreakoutStrategy,
-        "explosion_scanner": ExplosionScannerStrategy,
-        "mock_test": MockStrategy,
-    }
+    Note: Strategies in backend/app/services/strategies/ currently depend on
+    the deleted backtest_v3 module. They will need to be refactored in a
+    follow-up task (e.g., KINA-330) to work with VBT or new architecture.
+    """
+    registry = {}
+
+    # Attempt to import each strategy, skip if dependencies are missing
+    try:
+        from .strategies.smc_strategy import SMCStrategy
+        registry["smc_v2"] = SMCStrategy
+    except (ImportError, ModuleNotFoundError) as e:
+        logger.warning(f"Could not import SMCStrategy: {e}")
+
+    try:
+        from .strategies.momentum_breakout import MomentumBreakoutStrategy
+        registry["momentum_breakout"] = MomentumBreakoutStrategy
+    except (ImportError, ModuleNotFoundError) as e:
+        logger.warning(f"Could not import MomentumBreakoutStrategy: {e}")
+
+    try:
+        from .strategies.explosion_scanner import ExplosionScannerStrategy
+        registry["explosion_scanner"] = ExplosionScannerStrategy
+    except (ImportError, ModuleNotFoundError) as e:
+        logger.warning(f"Could not import ExplosionScannerStrategy: {e}")
+
+    try:
+        from .strategies.mock_strategy import MockStrategy
+        registry["mock_test"] = MockStrategy
+    except (ImportError, ModuleNotFoundError) as e:
+        logger.warning(f"Could not import MockStrategy: {e}")
+
+    return registry
 
 
 # Registry metadata — 每個策略的 label + 預設 params
@@ -184,7 +271,6 @@ def _generate_signal_series(
         tp_stops (float Series): 停利幅度（相對 entry price 的比例，NaN 表示無信號）
         signals_count: 產生 buy signal 的天數
     """
-    from .backtest_v3.provider import HistoricalProvider
 
     registry = get_strategy_registry()
     if strategy_name not in registry:

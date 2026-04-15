@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
 
@@ -7,25 +8,33 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # ── 資料庫 ─────────────────────────────────────────────
-    DB_HOST: str = "localhost"
+    DB_HOST: Optional[str] = None  # None = 使用嵌入式 PostgreSQL，否則使用外部數據庫
     DB_PORT: int = 5432
     DB_USER: str = "postgres"
     DB_PASSWORD: str = ""
     DB_NAME: str = "money_printer"
 
     @property
-    def DATABASE_URL(self) -> str:
+    def embedded_db_mode(self) -> bool:
+        """是否使用嵌入式 PostgreSQL（當 DB_HOST 為 None 時）"""
+        return self.DB_HOST is None
+
+    @property
+    def DATABASE_URL(self) -> Optional[str]:
+        """
+        回傳資料庫 URL，若使用嵌入式模式則返回 None（由 EmbeddedDBManager 提供）
+        """
+        if self.embedded_db_mode:
+            return None
+
+        # 外部數據庫模式：組合 URL
         pwd = f":{self.DB_PASSWORD}" if self.DB_PASSWORD else ""
         return f"postgresql+asyncpg://{self.DB_USER}{pwd}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
     @property
     def AUTO_DB(self) -> bool:
-        """是否自動啟動嵌入式 PostgreSQL（條件：localhost + 空密碼 + postgres 用戶）"""
-        return (
-            self.DB_HOST == "localhost"
-            and self.DB_PASSWORD == ""
-            and self.DB_USER == "postgres"
-        )
+        """[已廢棄] 使用 embedded_db_mode 替代"""
+        return self.embedded_db_mode
 
     # ── 認證 ───────────────────────────────────────────────
     SECRET_KEY: str = "dev-only-change-in-production-please"

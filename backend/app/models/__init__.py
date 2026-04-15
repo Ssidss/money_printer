@@ -2,18 +2,17 @@ from .user import User
 from .stock import Stock, PriceHistory
 from .analysis import AnalysisResult, NewsArticle
 from .portfolio import PortfolioTransaction, PortfolioHolding
-from .backtest import BacktestResult, BacktestResultV3
+from .backtest import BacktestResult
 from .ai_note import AiAnalysisNote
-from .strategy import (
-    StrategyProfile, BacktestResultV2, BacktestTrade, BacktestEquity, StrategySignal,
-)
+from .site import Site
+from .marketing_card import MarketingCard
 
 __all__ = [
     "User",
     "Stock", "PriceHistory",
     "AnalysisResult", "NewsArticle",
     "PortfolioTransaction", "PortfolioHolding",
-    "BacktestResult", "BacktestResultV3",
+    "BacktestResult",
     "AiAnalysisNote",
-    "StrategyProfile", "BacktestResultV2", "BacktestTrade", "BacktestEquity", "StrategySignal",
+    "Site", "MarketingCard",
 ]
