@@ -28,12 +28,131 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+# ── Legacy API stubs (for strategy migration) ─────────────────────────────────
+# These are minimal stub implementations to allow strategies to import and work
+# with the new VBT architecture. Strategies will be fully refactored in KINA-330
+# to use native VBT signal generation instead of legacy provider pattern.
+
+class Signal:
+    """
+    Stub Signal class for backwards compatibility with legacy strategies.
+    Strategies generate Signal objects which are then converted to entries/stops.
+    """
+    def __init__(
+        self,
+        ticker: str,
+        entry_price: float,
+        stop_price: float,
+        target_price: float,
+        confidence: float,
+        reason: str = "",
+        signal_date: Optional[date] = None,
+    ):
+        self.ticker = ticker
+        self.entry_price = entry_price
+        self.stop_price = stop_price
+        self.target_price = target_price
+        self.confidence = confidence
+        self.reason = reason
+        self.signal_date = signal_date or date.today()
+
+    def __repr__(self):
+        return f"Signal({self.ticker} @ {self.entry_price})"
+
+
+class DataProvider:
+    """
+    Stub data provider interface for legacy strategies.
+    Wraps HistoricalProvider to provide familiar API.
+    """
+    def __init__(self, historical_provider: HistoricalProvider):
+        self._provider = historical_provider
+
+    def current_date(self) -> date:
+        """Get the current simulation date."""
+        return self._provider._current_date or date.today()
+
+    def get_ohlcv(self, ticker: str, lookback: Optional[int] = None) -> pd.DataFrame:
+        """Get OHLCV data for ticker (up to current date, prevents look-ahead bias)."""
+        df = self._provider.get_ohlcv(ticker)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        if lookback:
+            return df.iloc[-lookback:] if len(df) >= lookback else df
+        return df
+
+    def get_indicators(self, ticker: str) -> dict:
+        """
+        Stub: return basic indicators computed from price data.
+        Strategies can extend this with their own indicator logic.
+        """
+        df = self.get_ohlcv(ticker)
+        if df is None or len(df) < 14:
+            return {"rsi_14": 50.0, "atr_14": 0.0}
+
+        # Basic RSI(14)
+        try:
+            delta = df["Close"].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            rsi_val = float(rsi.iloc[-1]) if not np.isnan(rsi.iloc[-1]) else 50.0
+        except Exception:
+            rsi_val = 50.0
+
+        # Basic ATR(14)
+        try:
+            high = df["High"].values
+            low = df["Low"].values
+            close = df["Close"].values
+            tr1 = high[1:] - low[1:]
+            tr2 = np.abs(high[1:] - close[:-1])
+            tr3 = np.abs(low[1:] - close[:-1])
+            tr = np.maximum(tr1, np.maximum(tr2, tr3))
+            atr = np.mean(tr[-14:]) if len(tr) >= 14 else 0.0
+        except Exception:
+            atr = 0.0
+
+        return {"rsi_14": rsi_val, "atr_14": float(atr)}
+
+
+class BaseStrategy:
+    """
+    Stub base class for legacy strategies.
+    All strategy implementations must inherit from this and implement generate_signals().
+    """
+    @property
+    def strategy_name(self) -> str:
+        """Return the unique strategy identifier."""
+        return "base_strategy"
+
+    @property
+    def strategy_type(self) -> str:
+        """Return the strategy type (e.g., 'trend', 'breakout', 'mean_reversion')."""
+        return "generic"
+
+    def generate_signals(self, ticker: str, provider: DataProvider) -> list[Signal]:
+        """
+        Generate trading signals for a given ticker.
+        Must be implemented by subclasses.
+
+        Args:
+            ticker: Stock ticker symbol
+            provider: DataProvider instance for historical data access
+
+        Returns:
+            List of Signal objects (empty if no signal)
+        """
+        return []
+
+
 # ── HistoricalProvider (minimal implementation for VBT) ──────────────────────
 
 class HistoricalProvider:
     """
     Minimal data provider for strategy signal generation.
-    Replaced from deleted backtest_v3.provider.HistoricalProvider.
+    Implements day-by-day historical data access to prevent look-ahead bias.
     """
 
     def __init__(self, price_data: dict, stocks_info: list, start_date: date, end_date: date,
@@ -107,9 +226,8 @@ def _build_registry():
     """
     Build strategy registry dynamically.
 
-    Note: Strategies in backend/app/services/strategies/ currently depend on
-    the deleted backtest_v3 module. They will need to be refactored in a
-    follow-up task (e.g., KINA-330) to work with VBT or new architecture.
+    Note: Strategies use legacy BaseStrategy/DataProvider interfaces.
+    They will be refactored in KINA-330 to use native VBT signal generation.
     """
     registry = {}
 

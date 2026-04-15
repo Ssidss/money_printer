@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from ..backtest_v3.models import Signal
-from ..backtest_v3.provider import DataProvider
-from ..backtest_v3.strategy import BaseStrategy
+from ..backtest_vbt import Signal, DataProvider, BaseStrategy
 
 logger = logging.getLogger(__name__)
 
