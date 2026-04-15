@@ -9,10 +9,14 @@ class Settings(BaseSettings):
 
     # ── 資料庫 ─────────────────────────────────────────────
     DB_HOST: Optional[str] = None  # None = 使用嵌入式 PostgreSQL，否則使用外部數據庫
-    DB_PORT: int = 5432
+    DB_PORT: int = 54330  # 預設改為 54330，避免與系統 PG (5432) 衝突
     DB_USER: str = "postgres"
     DB_PASSWORD: str = ""
     DB_NAME: str = "money_printer"
+
+    # ── 嵌入式 PostgreSQL 配置 ─────────────────────────────
+    DATA_DIR: Optional[str] = None  # None = ~/.kingarmy/db/，可透過環境變數覆寫
+    EMBEDDED_PG_PORT: int = 54330  # 嵌入式 PG 埠號，預設 54330
 
     @property
     def embedded_db_mode(self) -> bool:
@@ -20,14 +24,20 @@ class Settings(BaseSettings):
         return self.DB_HOST is None
 
     @property
-    def DATABASE_URL(self) -> Optional[str]:
+    def DATABASE_URL(self) -> str:
         """
-        回傳資料庫 URL，若使用嵌入式模式則返回 None（由 EmbeddedDBManager 提供）
+        回傳資料庫 URL
+
+        嵌入式模式：連接至本機 localhost:EMBEDDED_PG_PORT
+        外部模式：連接至 DB_HOST:DB_PORT
         """
         if self.embedded_db_mode:
-            return None
+            # 嵌入式模式：使用 localhost + EMBEDDED_PG_PORT
+            port = self.EMBEDDED_PG_PORT
+            pwd = f":{self.DB_PASSWORD}" if self.DB_PASSWORD else ""
+            return f"postgresql+asyncpg://{self.DB_USER}{pwd}@localhost:{port}/{self.DB_NAME}"
 
-        # 外部數據庫模式：組合 URL
+        # 外部數據庫模式：使用 DB_HOST + DB_PORT
         pwd = f":{self.DB_PASSWORD}" if self.DB_PASSWORD else ""
         return f"postgresql+asyncpg://{self.DB_USER}{pwd}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 

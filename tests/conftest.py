@@ -26,11 +26,13 @@ def mock_settings():
     from app.config import Settings
 
     settings = Settings(
-        DB_HOST="localhost",
-        DB_PORT=5432,
+        DB_HOST=None,  # 使用嵌入式 PostgreSQL 模式
+        DB_PORT=54330,
         DB_USER="postgres",
         DB_PASSWORD="",
         DB_NAME="money_printer",
+        DATA_DIR=None,  # 使用預設 ~/.kingarmy/db/
+        EMBEDDED_PG_PORT=54330,
     )
     return settings
 

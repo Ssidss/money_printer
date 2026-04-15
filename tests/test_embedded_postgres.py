@@ -21,14 +21,14 @@ class TestPostgreSQLManager:
             pgdata_dir=temp_pgdata_dir,
             db_user="postgres",
             db_password="",
-            db_port=5432,
+            db_port=54330,  # 使用新預設埠
         )
 
     def test_initialization(self, pg_manager):
         """測試管理器初始化"""
         assert pg_manager.db_user == "postgres"
         assert pg_manager.db_password == ""
-        assert pg_manager.db_port == 5432
+        assert pg_manager.db_port == 54330  # 新預設埠
         assert pg_manager.process is None
         assert pg_manager.use_embedded_postgres is False
         assert pg_manager._startup_attempted is False
@@ -36,13 +36,75 @@ class TestPostgreSQLManager:
     def test_pgdata_dir_expansion(self, temp_pgdata_dir):
         """測試 pgdata_dir 的路徑擴展"""
         pg_manager = PostgreSQLManager(
-            pgdata_dir="~/.money_printer/pgdata",
+            pgdata_dir="~/.kingarmy/db",
             db_user="postgres",
             db_password="",
-            db_port=5432,
+            db_port=54330,
         )
-        expected = Path.home() / ".money_printer/pgdata"
+        expected = Path.home() / ".kingarmy/db"
         assert pg_manager.pgdata_dir == expected
+
+    def test_pgdata_dir_default(self):
+        """測試 pgdata_dir 預設值（無參數時）"""
+        pg_manager = PostgreSQLManager(
+            db_user="postgres",
+            db_password="",
+        )
+        # 無參數時應預設為 ~/.kingarmy/db/
+        expected = Path.home() / ".kingarmy/db"
+        assert pg_manager.pgdata_dir == expected
+
+    def test_pgdata_dir_env_override(self, monkeypatch):
+        """測試 DATA_DIR 環境變數可覆寫預設值"""
+        custom_path = "/custom/db/path"
+        monkeypatch.setenv("DATA_DIR", custom_path)
+
+        pg_manager = PostgreSQLManager(
+            db_user="postgres",
+            db_password="",
+        )
+        assert pg_manager.pgdata_dir == Path(custom_path)
+
+    def test_pgdata_dir_param_overrides_env(self, monkeypatch):
+        """測試參數優先於環境變數"""
+        monkeypatch.setenv("DATA_DIR", "/env/path")
+
+        pg_manager = PostgreSQLManager(
+            pgdata_dir="/param/path",
+            db_user="postgres",
+            db_password="",
+        )
+        assert pg_manager.pgdata_dir == Path("/param/path")
+
+    def test_db_port_default(self):
+        """測試 db_port 預設值（無參數時）"""
+        pg_manager = PostgreSQLManager(
+            db_user="postgres",
+            db_password="",
+        )
+        # 無參數時應預設為 54330
+        assert pg_manager.db_port == 54330
+
+    def test_db_port_env_override(self, monkeypatch):
+        """測試 EMBEDDED_PG_PORT 環境變數可覆寫預設值"""
+        monkeypatch.setenv("EMBEDDED_PG_PORT", "6543")
+
+        pg_manager = PostgreSQLManager(
+            db_user="postgres",
+            db_password="",
+        )
+        assert pg_manager.db_port == 6543
+
+    def test_db_port_param_overrides_env(self, monkeypatch):
+        """測試埠號參數優先於環境變數"""
+        monkeypatch.setenv("EMBEDDED_PG_PORT", "5555")
+
+        pg_manager = PostgreSQLManager(
+            db_user="postgres",
+            db_password="",
+            db_port=7777,
+        )
+        assert pg_manager.db_port == 7777
 
     def test_is_running_returns_false_when_not_listening(self, pg_manager):
         """當連接埠沒有監聽時，is_running 應返回 False"""
@@ -172,14 +234,14 @@ class TestPostgreSQLManager:
                 assert start_call is not None, "未找到包含 'start' 的 pg_ctl 呼叫"
                 cmd = start_call[0][0]
 
-                # 正確：應包含 ["-o", "-p 5432"]
+                # 正確：應包含 ["-o", "-p 54330"]（或其他指定的埠號）
                 assert "-o" in cmd, f"命令缺少 '-o' 旗標: {cmd}"
                 o_index = cmd.index("-o")
                 assert o_index + 1 < len(cmd), f"'-o' 後面應該有參數"
                 assert f"-p {pg_manager.db_port}" in cmd[o_index + 1], \
                     f"'-o' 後面的參數應該包含 '-p {pg_manager.db_port}'，得到: {cmd[o_index + 1]}"
 
-                # 錯誤：不應直接出現 ["-p", "5432"]（作為獨立參數）
+                # 錯誤：不應直接出現 ["-p", "PORT"]（作為獨立參數）
                 if "-p" in cmd:
                     p_index = cmd.index("-p")
                     # 確認 -p 不是獨立出現，而是在 -o 的參數內

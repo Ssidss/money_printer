@@ -19,24 +19,35 @@ class PostgreSQLManager:
 
     def __init__(
         self,
-        pgdata_dir: str = "~/.money_printer/pgdata",
+        pgdata_dir: Optional[str] = None,
         db_user: str = "postgres",
         db_password: str = "",
-        db_port: int = 5432,
+        db_port: Optional[int] = None,
     ):
         """
         初始化 PostgreSQL 管理器
 
         Args:
-            pgdata_dir: PostgreSQL 資料目錄，預設 ~/.money_printer/pgdata
+            pgdata_dir: PostgreSQL 資料目錄。
+                若為 None，使用 DATA_DIR 環境變數或預設 ~/.kingarmy/db/
             db_user: PostgreSQL 用戶名，預設 postgres
             db_password: PostgreSQL 密碼，預設為空
-            db_port: PostgreSQL 埠號，預設 5432
+            db_port: PostgreSQL 埠號。
+                若為 None，使用 EMBEDDED_PG_PORT 環境變數或預設 54330
         """
-        self.pgdata_dir = Path(pgdata_dir).expanduser().absolute()
+        # 解析資料目錄：優先順序：參數 > DATA_DIR env > ~/.kingarmy/db/
+        if pgdata_dir:
+            self.pgdata_dir = Path(pgdata_dir).expanduser().absolute()
+        else:
+            data_dir = os.getenv("DATA_DIR", "~/.kingarmy/db")
+            self.pgdata_dir = Path(data_dir).expanduser().absolute()
         self.db_user = db_user
         self.db_password = db_password
-        self.db_port = db_port
+        # 解析埠號：優先順序：參數 > EMBEDDED_PG_PORT env > 54330
+        if db_port is not None:
+            self.db_port = db_port
+        else:
+            self.db_port = int(os.getenv("EMBEDDED_PG_PORT", "54330"))
         self.process: Optional[subprocess.Popen] = None
         self.use_embedded_postgres = False
         self._startup_attempted = False

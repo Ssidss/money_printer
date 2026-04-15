@@ -77,10 +77,10 @@ async def lifespan(app: FastAPI):
     if settings.AUTO_DB:
         logger.info("AUTO_DB 已啟用，嘗試啟動嵌入式 PostgreSQL...")
         _pg_manager = PostgreSQLManager(
-            pgdata_dir="~/.money_printer/pgdata",
+            pgdata_dir=settings.DATA_DIR,
             db_user=settings.DB_USER,
             db_password=settings.DB_PASSWORD,
-            db_port=settings.DB_PORT,
+            db_port=settings.EMBEDDED_PG_PORT,
         )
         try:
             startup_info = await _pg_manager.start()
