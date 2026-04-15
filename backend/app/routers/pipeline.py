@@ -89,6 +89,7 @@ async def trigger_pipeline(req: PipelineRunRequest, background_tasks: Background
     啟動 Pipeline。
 
     背景執行，通過 SSE `/sse/progress` 推送進度。
+    Pipeline 運行記錄會被保存到數據庫。
 
     Request:
     ```json
@@ -113,6 +114,8 @@ async def trigger_pipeline(req: PipelineRunRequest, background_tasks: Background
     }
     ```
     """
+    from ..services.pipeline_service import PipelineService
+
     global _current_run, _cancel_event
 
     # 檢查是否已有 pipeline 運行中（使用同步全域狀態作為原子判斷）
@@ -149,6 +152,26 @@ async def trigger_pipeline(req: PipelineRunRequest, background_tasks: Background
         "win_rate_history": [],
         "error": None,
     }
+
+    # 建立 pipeline run 記錄到數據庫
+    try:
+        await PipelineService.create_pipeline_run(
+            run_id=run_id,
+            symbols=req.symbols,
+            train_start=train_start,
+            train_end=train_end,
+            val_start=val_start,
+            val_end=val_end,
+            status="running",
+            strategies=req.strategies,
+            timeframe=req.timeframe,
+            max_iterations=req.max_iterations,
+            convergence_threshold=req.convergence_threshold,
+        )
+        logger.info(f"Pipeline run record created in database: {run_id}")
+    except Exception as e:
+        logger.error(f"Failed to create pipeline run record: {e}", exc_info=True)
+        # 不中斷流程，即使數據庫記錄失敗
 
     # 加入背景任務
     background_tasks.add_task(
@@ -247,7 +270,8 @@ async def stop_pipeline():
     如果沒有 pipeline 運行中，返回 409。
     如果成功停止，返回 200 並設置取消信號。
 
-    Pipeline 會在下一個迴圈檢查點停止。
+    Pipeline 會在下一個迴圈檢查點停止並設置狀態為 cancelled。
+    cancelled 狀態會被記錄到數據庫。
 
     Response:
     ```json
@@ -257,6 +281,8 @@ async def stop_pipeline():
     }
     ```
     """
+    from ..services.pipeline_service import PipelineService
+
     global _current_run, _cancel_event
 
     # 檢查是否有運行中的 pipeline
@@ -266,18 +292,28 @@ async def stop_pipeline():
             detail="Pipeline is not running"
         )
 
+    run_id = _current_run.get("run_id")
+
     # 設置取消信號
     _cancel_event.set()
 
-    # 更新狀態為 stopped
+    # 更新狀態為 stopped（待背景任務更新為 cancelled）
     _current_run["status"] = "stopped"
+
+    # 記錄 cancelled 狀態到數據庫
+    try:
+        await PipelineService.mark_as_cancelled(run_id)
+        logger.info(f"Pipeline {run_id} marked as cancelled in database")
+    except Exception as e:
+        logger.error(f"Failed to record cancelled state: {e}", exc_info=True)
+        # 不中斷流程，即使數據庫記錄失敗
 
     logger.info("Pipeline stop requested")
 
     # 發送停止事件
     await sse_manager.broadcast("pipeline_stop_requested", {
         "status": "stop_requested",
-        "run_id": _current_run.get("run_id"),
+        "run_id": run_id,
     })
 
     return {
@@ -300,12 +336,13 @@ async def _run_pipeline_background(
     convergence_threshold: float,
 ):
     """背景執行 Pipeline"""
+    from ..services.pipeline_service import PipelineService
+    from ..services.run_memory_pipeline import run_pipeline
+
     global _current_run, _cancel_event
 
     async with _pipeline_lock:
         try:
-            from ..services.run_memory_pipeline import run_pipeline
-
             result = await run_pipeline(
                 symbols=symbols,
                 train_start=train_start,
@@ -320,9 +357,27 @@ async def _run_pipeline_background(
             )
 
             # 更新全域狀態
+            run_id = None
             if _current_run is not None:
+                run_id = _current_run.get("run_id")
                 _current_run.update(result)
                 _current_run["status"] = result.get("status", "unknown")
+
+            # 更新數據庫中的狀態
+            if run_id:
+                try:
+                    await PipelineService.update_pipeline_run(
+                        run_id,
+                        status=result.get("status", "unknown"),
+                        current_iteration=result.get("iterations", 0),
+                        win_rate_history=result.get("win_rate_history", []),
+                        converged=result.get("converged", False),
+                        validation_report=result.get("validation_report"),
+                        error=result.get("error"),
+                    )
+                    logger.info(f"Pipeline run record updated in database: {run_id}")
+                except Exception as e:
+                    logger.error(f"Failed to update pipeline run record: {e}", exc_info=True)
 
             logger.info(f"Pipeline completed: {result}")
 
@@ -331,6 +386,19 @@ async def _run_pipeline_background(
             if _current_run is not None:
                 _current_run["status"] = "failed"
                 _current_run["error"] = str(e)
+
+                # 也更新數據庫中的狀態
+                run_id = _current_run.get("run_id")
+                if run_id:
+                    try:
+                        from ..services.pipeline_service import PipelineService
+                        await PipelineService.update_pipeline_run(
+                            run_id,
+                            status="failed",
+                            error=str(e),
+                        )
+                    except Exception as db_error:
+                        logger.error(f"Failed to update failed status in database: {db_error}", exc_info=True)
         finally:
             # 清除 cancel event 供下次使用
             _cancel_event.clear()

@@ -32,17 +32,17 @@ def sample_ohlcv():
 
 def test_decision_table_strategy_in_registry():
     """DecisionTableStrategy 應在 STRATEGY_REGISTRY 中可用"""
-    from backend.app.services.backtest_vbt import get_strategy_registry
+    from app.services.backtest_vbt import get_strategy_registry
 
     registry = get_strategy_registry()
     assert 'decision_table' in registry
-    from backend.app.services.strategies.decision_table_strategy import DecisionTableStrategy
+    from app.services.strategies.decision_table_strategy import DecisionTableStrategy
     assert registry['decision_table'] == DecisionTableStrategy
 
 
 def test_decision_table_strategy_properties():
     """DecisionTableStrategy 應有正確的 strategy_name 和 strategy_type"""
-    from backend.app.services.strategies.decision_table_strategy import DecisionTableStrategy
+    from app.services.strategies.decision_table_strategy import DecisionTableStrategy
 
     strategy = DecisionTableStrategy()
     assert strategy.strategy_name == 'decision_table'
@@ -56,8 +56,8 @@ def test_decision_table_strategy_properties():
 @pytest.mark.asyncio
 async def test_strategy_lookups_decision_table():
     """DecisionTableStrategy 應查詢記憶引擎決策表"""
-    from backend.app.services.strategies.decision_table_strategy import DecisionTableStrategy
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.strategies.decision_table_strategy import DecisionTableStrategy
+    from app.services.memory_client import MemoryEngineClient
 
     mock_client = AsyncMock(spec=MemoryEngineClient)
     mock_client.lookup = AsyncMock(return_value={
@@ -89,8 +89,8 @@ async def test_strategy_lookups_decision_table():
 @pytest.mark.asyncio
 async def test_strategy_generates_buy_signal_from_decision_table(sample_ohlcv):
     """決策表 action='BUY' 應生成買入信號"""
-    from backend.app.services.strategies.decision_table_strategy import DecisionTableStrategy
-    from backend.app.services.backtest_vbt import DataProvider, Signal
+    from app.services.strategies.decision_table_strategy import DecisionTableStrategy
+    from app.services.backtest_vbt import DataProvider, Signal
 
     mock_client = AsyncMock()
     mock_client.lookup = AsyncMock(return_value={
@@ -120,7 +120,7 @@ async def test_strategy_generates_buy_signal_from_decision_table(sample_ohlcv):
 @pytest.mark.asyncio
 async def test_strategy_generates_no_signal_for_hold(sample_ohlcv):
     """決策表 action='HOLD' 應不生成信號"""
-    from backend.app.services.strategies.decision_table_strategy import DecisionTableStrategy
+    from app.services.strategies.decision_table_strategy import DecisionTableStrategy
 
     mock_client = AsyncMock()
     mock_client.lookup = AsyncMock(return_value={
@@ -147,8 +147,8 @@ async def test_strategy_generates_no_signal_for_hold(sample_ohlcv):
 @pytest.mark.asyncio
 async def test_strategy_handles_memory_engine_unavailable(sample_ohlcv):
     """記憶引擎不可達時，策略應降級或拋出有意義的異常"""
-    from backend.app.services.strategies.decision_table_strategy import DecisionTableStrategy
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.strategies.decision_table_strategy import DecisionTableStrategy
+    from app.services.memory_client import MemoryEngineClient
 
     mock_client = AsyncMock(spec=MemoryEngineClient)
     mock_client.lookup = AsyncMock(side_effect=Exception('Connection refused'))
@@ -170,8 +170,8 @@ async def test_strategy_handles_memory_engine_unavailable(sample_ohlcv):
 @pytest.mark.asyncio
 async def test_strategy_can_check_memory_health():
     """DecisionTableStrategy 應能檢查記憶引擎健康狀態"""
-    from backend.app.services.strategies.decision_table_strategy import DecisionTableStrategy
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.strategies.decision_table_strategy import DecisionTableStrategy
+    from app.services.memory_client import MemoryEngineClient
 
     mock_client = AsyncMock(spec=MemoryEngineClient)
     mock_client.health = AsyncMock(return_value=True)
@@ -189,7 +189,7 @@ async def test_strategy_can_check_memory_health():
 
 def test_decision_table_strategy_initialization():
     """DecisionTableStrategy 應可初始化"""
-    from backend.app.services.strategies.decision_table_strategy import DecisionTableStrategy
+    from app.services.strategies.decision_table_strategy import DecisionTableStrategy
 
     # 無參數初始化
     strategy = DecisionTableStrategy()
@@ -203,7 +203,7 @@ def test_decision_table_strategy_initialization():
 
 def test_decision_table_strategy_with_config():
     """DecisionTableStrategy 應支持配置參數"""
-    from backend.app.services.strategies.decision_table_strategy import DecisionTableStrategy
+    from app.services.strategies.decision_table_strategy import DecisionTableStrategy
 
     config = {
         'stock_category': 'large_cap',

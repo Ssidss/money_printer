@@ -12,7 +12,7 @@ from datetime import date
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
-from backend.app.main import app
+from app.main import app
 
 client = TestClient(app)
 
@@ -34,7 +34,7 @@ class TestPipelineRunEndpoint:
             "convergence_threshold": 0.02,
         }
 
-        with patch("backend.app.routers.pipeline._current_run", None):
+        with patch("app.routers.pipeline._current_run", None):
             response = client.post("/api/v1/pipeline/run", json=payload)
 
         assert response.status_code == 200
@@ -66,7 +66,7 @@ class TestPipelineRunEndpoint:
             "val_end": "2025-03-31",
         }
 
-        with patch("backend.app.routers.pipeline._current_run", None):
+        with patch("app.routers.pipeline._current_run", None):
             response = client.post("/api/v1/pipeline/run", json=payload)
 
         assert response.status_code == 400
@@ -96,7 +96,7 @@ class TestPipelineRunEndpoint:
             "error": None,
         }
 
-        with patch("backend.app.routers.pipeline._current_run", running_state):
+        with patch("app.routers.pipeline._current_run", running_state):
             response = client.post("/api/v1/pipeline/run", json=payload)
 
         assert response.status_code == 409
@@ -122,7 +122,7 @@ class TestPipelineStatusEndpoint:
 
     def test_idle_status(self):
         """測試無運行中 pipeline 時的狀態"""
-        with patch("backend.app.routers.pipeline._current_run", None):
+        with patch("app.routers.pipeline._current_run", None):
             response = client.get("/api/v1/pipeline/status")
 
         assert response.status_code == 200
@@ -142,7 +142,7 @@ class TestPipelineStatusEndpoint:
             "error": None,
         }
 
-        with patch("backend.app.routers.pipeline._current_run", running_state):
+        with patch("app.routers.pipeline._current_run", running_state):
             response = client.get("/api/v1/pipeline/status")
 
         assert response.status_code == 200
@@ -168,7 +168,7 @@ class TestPipelineStatusEndpoint:
             },
         }
 
-        with patch("backend.app.routers.pipeline._current_run", completed_state):
+        with patch("app.routers.pipeline._current_run", completed_state):
             response = client.get("/api/v1/pipeline/status")
 
         assert response.status_code == 200
@@ -186,7 +186,7 @@ class TestPipelineStatusEndpoint:
             "error": "Memory engine connection failed",
         }
 
-        with patch("backend.app.routers.pipeline._current_run", failed_state):
+        with patch("app.routers.pipeline._current_run", failed_state):
             response = client.get("/api/v1/pipeline/status")
 
         assert response.status_code == 200
@@ -200,7 +200,7 @@ class TestPipelineReportEndpoint:
 
     def test_no_report_available(self):
         """測試無報告時的回應"""
-        with patch("backend.app.routers.pipeline._current_run", None):
+        with patch("app.routers.pipeline._current_run", None):
             response = client.get("/api/v1/pipeline/report")
 
         assert response.status_code == 200
@@ -226,7 +226,7 @@ class TestPipelineReportEndpoint:
             "validation_report": report_data,
         }
 
-        with patch("backend.app.routers.pipeline._current_run", current_run):
+        with patch("app.routers.pipeline._current_run", current_run):
             response = client.get("/api/v1/pipeline/report")
 
         assert response.status_code == 200
@@ -247,7 +247,7 @@ class TestPipelineStopEndpoint:
             "error": None,
         }
 
-        with patch("backend.app.routers.pipeline._current_run", running_state):
+        with patch("app.routers.pipeline._current_run", running_state):
             response = client.post("/api/v1/pipeline/stop")
 
         assert response.status_code == 200
@@ -257,7 +257,7 @@ class TestPipelineStopEndpoint:
 
     def test_stop_when_no_pipeline_running(self):
         """測試當沒有 pipeline 運行時停止"""
-        with patch("backend.app.routers.pipeline._current_run", None):
+        with patch("app.routers.pipeline._current_run", None):
             response = client.post("/api/v1/pipeline/stop")
 
         assert response.status_code == 409
@@ -272,7 +272,7 @@ class TestPipelineStopEndpoint:
             "win_rate_history": [0.45, 0.48, 0.50],
         }
 
-        with patch("backend.app.routers.pipeline._current_run", completed_state):
+        with patch("app.routers.pipeline._current_run", completed_state):
             response = client.post("/api/v1/pipeline/stop")
 
         assert response.status_code == 409
@@ -304,7 +304,7 @@ class TestPipelineRequestValidation:
             # 未指定 strategies, timeframe, max_iterations, convergence_threshold
         }
 
-        with patch("backend.app.routers.pipeline._pipeline_lock") as mock_lock:
+        with patch("app.routers.pipeline._pipeline_lock") as mock_lock:
             mock_lock.acquire_nowait.return_value = True
             response = client.post("/api/v1/pipeline/run", json=payload)
 

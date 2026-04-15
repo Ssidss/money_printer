@@ -42,7 +42,7 @@ def sample_backtest_input():
 @pytest.mark.asyncio
 async def test_run_vbt_backtest_without_memory_save(sample_backtest_input):
     """run_vbt_backtest() 應支持 save_to_memory=False (預設)"""
-    from backend.app.services.backtest_vbt import run_vbt_backtest
+    from app.services.backtest_vbt import run_vbt_backtest
 
     # 預期當 save_to_memory=False 時不調用記憶引擎
     with patch('backend.app.services.memory_converter.convert_vbt_result_to_memories') as mock_convert:
@@ -61,7 +61,7 @@ async def test_run_vbt_backtest_without_memory_save(sample_backtest_input):
 @pytest.mark.asyncio
 async def test_run_vbt_backtest_with_memory_save(sample_backtest_input):
     """run_vbt_backtest() 應支持 save_to_memory=True"""
-    from backend.app.services.backtest_vbt import run_vbt_backtest
+    from app.services.backtest_vbt import run_vbt_backtest
 
     with patch('backend.app.services.memory_converter.convert_vbt_result_to_memories') as mock_convert:
         mock_convert.return_value = 2  # 假設寫入 2 筆交易記憶
@@ -81,7 +81,7 @@ async def test_run_vbt_backtest_with_memory_save(sample_backtest_input):
 @pytest.mark.asyncio
 async def test_run_vbt_backtest_memory_save_with_market_param(sample_backtest_input):
     """save_to_memory=True 時應傳遞 market 參數"""
-    from backend.app.services.backtest_vbt import run_vbt_backtest
+    from app.services.backtest_vbt import run_vbt_backtest
 
     with patch('backend.app.services.memory_converter.convert_vbt_result_to_memories') as mock_convert:
         mock_convert.return_value = 1
@@ -103,7 +103,7 @@ async def test_run_vbt_backtest_memory_save_with_market_param(sample_backtest_in
 @pytest.mark.asyncio
 async def test_run_vbt_backtest_memory_save_default_market(sample_backtest_input):
     """save_to_memory=True 時如果未提供 market，應使用環境變數 DEFAULT_MARKET"""
-    from backend.app.services.backtest_vbt import run_vbt_backtest
+    from app.services.backtest_vbt import run_vbt_backtest
 
     with patch.dict('os.environ', {'DEFAULT_MARKET': 'tw'}, clear=False):
         with patch('backend.app.services.memory_converter.convert_vbt_result_to_memories') as mock_convert:
@@ -128,7 +128,7 @@ async def test_run_vbt_backtest_memory_save_default_market(sample_backtest_input
 @pytest.mark.asyncio
 async def test_memory_write_failure_does_not_fail_backtest(sample_backtest_input):
     """記憶引擎寫入失敗時，回測應繼續執行並記錄警告"""
-    from backend.app.services.backtest_vbt import run_vbt_backtest
+    from app.services.backtest_vbt import run_vbt_backtest
 
     with patch('backend.app.services.memory_converter.convert_vbt_result_to_memories') as mock_convert:
         mock_convert.side_effect = Exception('Memory engine unavailable')
@@ -155,7 +155,7 @@ async def test_memory_write_failure_does_not_fail_backtest(sample_backtest_input
 @pytest.mark.asyncio
 async def test_backtest_result_compatible_with_converter(sample_backtest_input):
     """回測結果應包含轉換器需要的所有欄位"""
-    from backend.app.services.backtest_vbt import run_vbt_backtest
+    from app.services.backtest_vbt import run_vbt_backtest
 
     with patch('backend.app.services.memory_converter.convert_vbt_result_to_memories') as mock_convert:
         mock_convert.return_value = 0

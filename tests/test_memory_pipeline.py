@@ -12,7 +12,7 @@ import asyncio
 from datetime import date
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from backend.app.services.run_memory_pipeline import run_pipeline, PipelineRunInfo
+from app.services.run_memory_pipeline import run_pipeline, PipelineRunInfo
 
 
 class TestPipelineRunInfo:
@@ -56,9 +56,9 @@ class TestRunPipelinePhases:
             },
         }
 
-        with patch("backend.app.services.run_memory_pipeline.run_vbt_backtest") as mock_run:
+        with patch("app.services.run_memory_pipeline.run_vbt_backtest") as mock_run:
             mock_run.return_value = mock_backtest_result
-            with patch("backend.app.services.run_memory_pipeline.sse_manager") as mock_sse:
+            with patch("app.services.run_memory_pipeline.sse_manager") as mock_sse:
                 mock_sse.broadcast = AsyncMock()
                 result = await run_pipeline(
                     symbols=symbols,
@@ -108,11 +108,11 @@ class TestRunPipelinePhases:
         )
         mock_client.close = AsyncMock()
 
-        with patch("backend.app.services.run_memory_pipeline.run_vbt_backtest") as mock_run:
+        with patch("app.services.run_memory_pipeline.run_vbt_backtest") as mock_run:
             mock_run.return_value = backtest_results[0]
-            with patch("backend.app.services.run_memory_pipeline.MemoryEngineClient") as mock_cls:
+            with patch("app.services.run_memory_pipeline.MemoryEngineClient") as mock_cls:
                 mock_cls.return_value = mock_client
-                with patch("backend.app.services.run_memory_pipeline.sse_manager") as mock_sse:
+                with patch("app.services.run_memory_pipeline.sse_manager") as mock_sse:
                     mock_sse.broadcast = AsyncMock()
                     result = await run_pipeline(
                         symbols=symbols,
@@ -145,9 +145,9 @@ class TestRunPipelinePhases:
             "stats": {"trades": 5, "wins": 3, "return_pct": 2.1},
         }
 
-        with patch("backend.app.services.run_memory_pipeline.run_vbt_backtest") as mock_run:
+        with patch("app.services.run_memory_pipeline.run_vbt_backtest") as mock_run:
             mock_run.return_value = validation_result
-            with patch("backend.app.services.run_memory_pipeline.MemoryEngineClient") as mock_cls:
+            with patch("app.services.run_memory_pipeline.MemoryEngineClient") as mock_cls:
                 mock_client = AsyncMock()
                 mock_client.trigger_reflect = AsyncMock()
                 mock_client.trigger_generate_table = AsyncMock()
@@ -155,7 +155,7 @@ class TestRunPipelinePhases:
                 mock_client.close = AsyncMock()
                 mock_cls.return_value = mock_client
 
-                with patch("backend.app.services.run_memory_pipeline.sse_manager") as mock_sse:
+                with patch("app.services.run_memory_pipeline.sse_manager") as mock_sse:
                     mock_sse.broadcast = AsyncMock()
                     result = await run_pipeline(
                         symbols=symbols,
@@ -194,12 +194,12 @@ class TestRunPipelinePhases:
             "stats": {"trades": 10, "wins": 6, "return_pct": 5.2},
         }
 
-        with patch("backend.app.services.run_memory_pipeline.run_vbt_backtest") as mock_run:
+        with patch("app.services.run_memory_pipeline.run_vbt_backtest") as mock_run:
             mock_run.return_value = mock_backtest_result
-            with patch("backend.app.services.run_memory_pipeline.MemoryEngineClient") as mock_cls:
+            with patch("app.services.run_memory_pipeline.MemoryEngineClient") as mock_cls:
                 # MemoryEngineClient 初始化失敗
                 mock_cls.side_effect = Exception("Memory engine connection failed")
-                with patch("backend.app.services.run_memory_pipeline.sse_manager") as mock_sse:
+                with patch("app.services.run_memory_pipeline.sse_manager") as mock_sse:
                     mock_sse.broadcast = AsyncMock()
                     result = await run_pipeline(
                         symbols=symbols,
@@ -234,9 +234,9 @@ class TestRunPipelinePhases:
             else:
                 raise Exception("MSFT backtest failed")
 
-        with patch("backend.app.services.run_memory_pipeline.run_vbt_backtest") as mock_run:
+        with patch("app.services.run_memory_pipeline.run_vbt_backtest") as mock_run:
             mock_run.side_effect = mock_backtest
-            with patch("backend.app.services.run_memory_pipeline.MemoryEngineClient") as mock_cls:
+            with patch("app.services.run_memory_pipeline.MemoryEngineClient") as mock_cls:
                 mock_client = AsyncMock()
                 mock_client.trigger_reflect = AsyncMock()
                 mock_client.trigger_generate_table = AsyncMock()
@@ -244,7 +244,7 @@ class TestRunPipelinePhases:
                 mock_client.close = AsyncMock()
                 mock_cls.return_value = mock_client
 
-                with patch("backend.app.services.run_memory_pipeline.sse_manager") as mock_sse:
+                with patch("app.services.run_memory_pipeline.sse_manager") as mock_sse:
                     mock_sse.broadcast = AsyncMock()
                     result = await run_pipeline(
                         symbols=symbols,
@@ -269,7 +269,7 @@ class TestValidationReport:
 
     def test_generate_validation_report_empty(self):
         """空結果時的驗證報告"""
-        from backend.app.services.run_memory_pipeline import _generate_validation_report
+        from app.services.run_memory_pipeline import _generate_validation_report
 
         report = _generate_validation_report([])
         assert report["symbols"] == []
@@ -278,7 +278,7 @@ class TestValidationReport:
 
     def test_generate_validation_report_with_results(self):
         """有結果時的驗證報告"""
-        from backend.app.services.run_memory_pipeline import _generate_validation_report
+        from app.services.run_memory_pipeline import _generate_validation_report
 
         results = [
             {

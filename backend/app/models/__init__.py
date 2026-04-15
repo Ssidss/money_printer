@@ -6,6 +6,7 @@ from .backtest import BacktestResult
 from .ai_note import AiAnalysisNote
 from .site import Site
 from .marketing_card import MarketingCard
+from .pipeline_run import PipelineRun
 
 __all__ = [
     "User",
@@ -15,4 +16,5 @@ __all__ = [
     "BacktestResult",
     "AiAnalysisNote",
     "Site", "MarketingCard",
+    "PipelineRun",
 ]

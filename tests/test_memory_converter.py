@@ -63,8 +63,8 @@ def sample_vbt_result():
 @pytest.mark.asyncio
 async def test_convert_vbt_result_basic(sample_ohlcv, sample_vbt_result):
     """convert_vbt_result_to_memories() 應提取 trades 並寫入記憶"""
-    from backend.app.services.memory_converter import convert_vbt_result_to_memories
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_converter import convert_vbt_result_to_memories
+    from app.services.memory_client import MemoryEngineClient
 
     # Mock memory client
     mock_client = AsyncMock(spec=MemoryEngineClient)
@@ -92,8 +92,8 @@ async def test_convert_vbt_result_basic(sample_ohlcv, sample_vbt_result):
 @pytest.mark.asyncio
 async def test_convert_empty_trades(sample_ohlcv):
     """convert_vbt_result_to_memories() 應處理空 trades"""
-    from backend.app.services.memory_converter import convert_vbt_result_to_memories
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_converter import convert_vbt_result_to_memories
+    from app.services.memory_client import MemoryEngineClient
 
     empty_result = {
         'symbol': 'AAPL',
@@ -124,8 +124,8 @@ async def test_convert_empty_trades(sample_ohlcv):
 @pytest.mark.asyncio
 async def test_convert_includes_technical_indicators(sample_ohlcv, sample_vbt_result):
     """轉換後的記憶應包含技術指標快照"""
-    from backend.app.services.memory_converter import convert_vbt_result_to_memories
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_converter import convert_vbt_result_to_memories
+    from app.services.memory_client import MemoryEngineClient
 
     mock_client = AsyncMock(spec=MemoryEngineClient)
 
@@ -166,8 +166,8 @@ async def test_convert_includes_technical_indicators(sample_ohlcv, sample_vbt_re
 @pytest.mark.asyncio
 async def test_convert_market_field(sample_ohlcv, sample_vbt_result):
     """轉換應包含市場標籤 (tw/us/futures)"""
-    from backend.app.services.memory_converter import convert_vbt_result_to_memories
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_converter import convert_vbt_result_to_memories
+    from app.services.memory_client import MemoryEngineClient
 
     mock_client = AsyncMock(spec=MemoryEngineClient)
     captured_trades = None
@@ -201,8 +201,8 @@ async def test_convert_market_field(sample_ohlcv, sample_vbt_result):
 @pytest.mark.asyncio
 async def test_convert_strategy_and_timeframe(sample_ohlcv, sample_vbt_result):
     """轉換應包含策略名稱和時間框架"""
-    from backend.app.services.memory_converter import convert_vbt_result_to_memories
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_converter import convert_vbt_result_to_memories
+    from app.services.memory_client import MemoryEngineClient
 
     mock_client = AsyncMock(spec=MemoryEngineClient)
     captured_trades = None
@@ -236,8 +236,8 @@ async def test_convert_strategy_and_timeframe(sample_ohlcv, sample_vbt_result):
 @pytest.mark.asyncio
 async def test_convert_pnl_fields(sample_ohlcv, sample_vbt_result):
     """轉換應正確包含損益相關欄位"""
-    from backend.app.services.memory_converter import convert_vbt_result_to_memories
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_converter import convert_vbt_result_to_memories
+    from app.services.memory_client import MemoryEngineClient
 
     mock_client = AsyncMock(spec=MemoryEngineClient)
     captured_trades = None
@@ -273,8 +273,8 @@ async def test_convert_pnl_fields(sample_ohlcv, sample_vbt_result):
 @pytest.mark.asyncio
 async def test_convert_memory_client_failure(sample_ohlcv, sample_vbt_result):
     """記憶引擎寫入失敗時應拋出異常"""
-    from backend.app.services.memory_converter import convert_vbt_result_to_memories
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_converter import convert_vbt_result_to_memories
+    from app.services.memory_client import MemoryEngineClient
 
     mock_client = AsyncMock(spec=MemoryEngineClient)
     mock_client.remember_batch = AsyncMock(side_effect=Exception('Memory engine error'))
@@ -297,8 +297,8 @@ async def test_convert_memory_client_failure(sample_ohlcv, sample_vbt_result):
 @pytest.mark.asyncio
 async def test_convert_missing_fields(sample_ohlcv):
     """轉換應處理缺失欄位的 VBT 結果"""
-    from backend.app.services.memory_converter import convert_vbt_result_to_memories
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_converter import convert_vbt_result_to_memories
+    from app.services.memory_client import MemoryEngineClient
 
     incomplete_result = {
         'symbol': 'AAPL',

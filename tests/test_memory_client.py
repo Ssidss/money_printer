@@ -9,14 +9,14 @@ import httpx
 
 def test_memory_client_default_url():
     """MemoryEngineClient 應使用預設 URL"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
     client = MemoryEngineClient()
     assert client.base_url == 'http://localhost:8001'
 
 
 def test_memory_client_custom_url():
     """MemoryEngineClient 應支持自定義 URL"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
     client = MemoryEngineClient(base_url='http://custom:8888')
     assert client.base_url == 'http://custom:8888'
 
@@ -24,7 +24,7 @@ def test_memory_client_custom_url():
 def test_memory_client_env_url():
     """MemoryEngineClient 應優先使用環境變數"""
     with patch.dict('os.environ', {'MEMORY_ENGINE_URL': 'http://env-url:8001'}, clear=False):
-        from backend.app.services.memory_client import MemoryEngineClient
+        from app.services.memory_client import MemoryEngineClient
         client = MemoryEngineClient()
         assert client.base_url == 'http://env-url:8001'
 
@@ -32,7 +32,7 @@ def test_memory_client_env_url():
 @pytest.mark.asyncio
 async def test_health_success():
     """health() 應回傳 True"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
 
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -49,7 +49,7 @@ async def test_health_success():
 @pytest.mark.asyncio
 async def test_health_failed():
     """health() 應回傳 False 當異常"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
 
     client = MemoryEngineClient()
     with patch.object(client, '_get_client', new_callable=AsyncMock, side_effect=httpx.ConnectError('fail')):
@@ -60,7 +60,7 @@ async def test_health_failed():
 @pytest.mark.asyncio
 async def test_remember():
     """remember() 應 POST 並回傳記憶 ID"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
 
     trade_data = {'symbol': 'AAPL', 'entry_price': 150.0}
 
@@ -80,7 +80,7 @@ async def test_remember():
 @pytest.mark.asyncio
 async def test_remember_batch():
     """remember_batch() 應批次寫入"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
 
     trades = [{'symbol': 'AAPL'}, {'symbol': 'MSFT'}]
 
@@ -100,7 +100,7 @@ async def test_remember_batch():
 @pytest.mark.asyncio
 async def test_recall():
     """recall() 應查詢相似記憶"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
 
     indicators = {'rsi': 65}
 
@@ -120,7 +120,7 @@ async def test_recall():
 @pytest.mark.asyncio
 async def test_get_decision_table():
     """get_decision_table() 應取得決策表"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
 
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -138,7 +138,7 @@ async def test_get_decision_table():
 @pytest.mark.asyncio
 async def test_lookup():
     """lookup() 應查詢決策規則"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
 
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -156,7 +156,7 @@ async def test_lookup():
 @pytest.mark.asyncio
 async def test_trigger_reflect():
     """trigger_reflect() 應觸發反思"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
 
     mock_response = MagicMock()
     mock_response.status_code = 202
@@ -174,7 +174,7 @@ async def test_trigger_reflect():
 @pytest.mark.asyncio
 async def test_trigger_generate_table():
     """trigger_generate_table() 應觸發生成"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
 
     mock_response = MagicMock()
     mock_response.status_code = 202
@@ -192,7 +192,7 @@ async def test_trigger_generate_table():
 @pytest.mark.asyncio
 async def test_get_stats():
     """get_stats() 應取得統計"""
-    from backend.app.services.memory_client import MemoryEngineClient
+    from app.services.memory_client import MemoryEngineClient
 
     mock_response = MagicMock()
     mock_response.status_code = 200

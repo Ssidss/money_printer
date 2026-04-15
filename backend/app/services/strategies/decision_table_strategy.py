@@ -10,8 +10,8 @@ from datetime import datetime
 
 import pandas as pd
 
-from backend.app.services.backtest_vbt import BaseStrategy, Signal, DataProvider
-from backend.app.services.memory_client import MemoryEngineClient
+from app.services.backtest_vbt import BaseStrategy, Signal, DataProvider
+from app.services.memory_client import MemoryEngineClient
 
 logger = logging.getLogger(__name__)
 

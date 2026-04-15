@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 from typing import Optional
 
-from backend.app.services.memory_client import MemoryEngineClient
+from app.services.memory_client import MemoryEngineClient
 
 logger = logging.getLogger(__name__)
 
