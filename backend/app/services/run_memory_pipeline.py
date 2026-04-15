@@ -78,6 +78,9 @@ async def run_pipeline(
         # ── Phase 1: 冷啟動 ────────────────────────────────────────────────
         await _emit(f"[Phase 1] 冷啟動：用現有策略累積初始記憶", phase="phase1")
 
+        total_phase1_tasks = len(strategies) * len(symbols)
+        phase1_completed = 0
+
         for strategy in strategies:
             for symbol in symbols:
                 try:
@@ -90,11 +93,12 @@ async def run_pipeline(
                         timeframe=timeframe,
                     )
                     if "error" not in result:
+                        phase1_completed += 1
                         await _emit(
                             f"[Phase 1] {symbol} × {strategy} 完成",
                             ticker=symbol,
-                            current=len(symbols),
-                            total=len(symbols)
+                            current=phase1_completed,
+                            total=total_phase1_tasks
                         )
                 except Exception as e:
                     logger.warning(f"Phase 1 backtest failed: {symbol} × {strategy}: {e}")
@@ -174,7 +178,8 @@ async def run_pipeline(
 
                     prev_win_rate = current_win_rate
                 except Exception as e:
-                    logger.warning(f"Failed to get stats: {e}")
+                    logger.warning(f"Failed to get stats in iteration {iteration + 1}: {e}")
+                    # 跳過本次迭代的收斂檢查，避免誤判
 
             await _emit("[Phase 2] 迭代完成", phase="phase2_done")
         finally:

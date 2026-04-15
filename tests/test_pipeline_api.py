@@ -34,8 +34,7 @@ class TestPipelineRunEndpoint:
             "convergence_threshold": 0.02,
         }
 
-        with patch("backend.app.routers.pipeline._pipeline_lock") as mock_lock:
-            mock_lock.acquire_nowait.return_value = True
+        with patch("backend.app.routers.pipeline._current_run", None):
             response = client.post("/api/v1/pipeline/run", json=payload)
 
         assert response.status_code == 200
@@ -67,15 +66,19 @@ class TestPipelineRunEndpoint:
             "val_end": "2025-03-31",
         }
 
-        with patch("backend.app.routers.pipeline._pipeline_lock") as mock_lock:
-            mock_lock.acquire_nowait.return_value = True
+        with patch("backend.app.routers.pipeline._current_run", None):
             response = client.post("/api/v1/pipeline/run", json=payload)
 
         assert response.status_code == 400
         assert "train_end must be after train_start" in response.json()["detail"]
 
     def test_pipeline_already_running(self):
-        """測試 pipeline 已在運行時的請求"""
+        """測試 pipeline 已在運行時的請求
+
+        並發控制：asyncio 單執行緒保證 _current_run 的檢查與設定為原子操作。
+        若 _current_run["status"] == "running"，則視為已有 pipeline 運行中，
+        返回 409 Conflict。
+        """
         payload = {
             "symbols": ["2330"],
             "train_start": "2024-01-01",
@@ -84,13 +87,34 @@ class TestPipelineRunEndpoint:
             "val_end": "2025-03-31",
         }
 
-        with patch("backend.app.routers.pipeline._pipeline_lock") as mock_lock:
-            # 模擬無法取得 lock
-            mock_lock.acquire_nowait.return_value = False
+        # 模擬已有 pipeline 運行中的狀態
+        running_state = {
+            "run_id": "pipeline-existing",
+            "status": "running",
+            "current_iteration": 0,
+            "win_rate_history": [],
+            "error": None,
+        }
+
+        with patch("backend.app.routers.pipeline._current_run", running_state):
             response = client.post("/api/v1/pipeline/run", json=payload)
 
         assert response.status_code == 409
         assert "already running" in response.json()["detail"]
+
+    def test_empty_symbols_list(self):
+        """測試空 symbols list 的驗證"""
+        payload = {
+            "symbols": [],  # 空列表
+            "train_start": "2024-01-01",
+            "train_end": "2024-12-31",
+            "val_start": "2025-01-01",
+            "val_end": "2025-03-31",
+        }
+
+        response = client.post("/api/v1/pipeline/run", json=payload)
+        assert response.status_code == 422  # 驗證錯誤
+        assert "symbols" in response.json()["detail"][0]["loc"]
 
 
 class TestPipelineStatusEndpoint:

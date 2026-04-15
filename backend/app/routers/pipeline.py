@@ -9,6 +9,7 @@ Endpoints:
 
 import asyncio
 import logging
+import uuid
 from datetime import date
 from typing import Optional
 
@@ -33,6 +34,13 @@ class PipelineRunRequest(BaseModel):
     timeframe: str = "1d"
     max_iterations: int = 5
     convergence_threshold: float = 0.02
+
+    @field_validator("symbols")
+    @classmethod
+    def validate_symbols(cls, v: list[str]) -> list[str]:
+        if not v or len(v) == 0:
+            raise ValueError("symbols list cannot be empty")
+        return v
 
     @field_validator("train_start", "train_end", "val_start", "val_end")
     @classmethod
@@ -103,14 +111,13 @@ async def trigger_pipeline(req: PipelineRunRequest, background_tasks: Background
     """
     global _current_run
 
-    # 檢查是否已有 pipeline 運行中（原子操作：嘗試取得 lock）
-    if not _pipeline_lock.acquire_nowait():
+    # 檢查是否已有 pipeline 運行中（使用同步全域狀態作為原子判斷）
+    # asyncio 單執行緒保證此判斷為原子操作
+    if _current_run is not None and _current_run.get("status") == "running":
         raise HTTPException(
             status_code=409,
             detail="Pipeline is already running. Wait for completion or check /pipeline/status"
         )
-    # 立即 release，由背景任務重新取得
-    _pipeline_lock.release()
 
     # 解析日期
     try:
@@ -127,7 +134,7 @@ async def trigger_pipeline(req: PipelineRunRequest, background_tasks: Background
     if val_end <= val_start:
         raise HTTPException(status_code=400, detail="val_end must be after val_start")
 
-    run_id = f"pipeline-{id(asyncio.current_task())}"
+    run_id = f"pipeline-{uuid.uuid4().hex[:8]}"
     _current_run = {
         "run_id": run_id,
         "status": "running",
