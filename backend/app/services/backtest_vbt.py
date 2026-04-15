@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional, Type
 
 import numpy as np
@@ -36,28 +37,64 @@ logger = logging.getLogger(__name__)
 class Signal:
     """
     Stub Signal class for backwards compatibility with legacy strategies.
-    Strategies generate Signal objects which are then converted to entries/stops.
+    Supports both old-style (entry/stop/target) and new-style (price_hint) specifications.
     """
     def __init__(
         self,
         ticker: str,
-        entry_price: float,
-        stop_price: float,
-        target_price: float,
         confidence: float,
+        # New-style fields (used by current strategies)
+        signal_id: Optional[str] = None,
+        side: str = "long",
+        action: str = "buy",
+        strategy_name: str = "",
+        strategy_type: str = "",
+        timeframe: str = "1d",
+        timestamp: Optional[datetime] = None,
+        expiry: Optional[datetime] = None,
+        position_tier: str = "標準",
+        price_hint: Optional[dict] = None,
+        meta: Optional[dict] = None,
+        source: str = "",
+        metadata: Optional[dict] = None,
+        # Old-style fields (for backward compatibility)
+        entry_price: Optional[float] = None,
+        stop_price: Optional[float] = None,
+        target_price: Optional[float] = None,
         reason: str = "",
         signal_date: Optional[date] = None,
+        **kwargs,  # Absorb any extra fields
     ):
         self.ticker = ticker
+        self.confidence = confidence
+        self.signal_id = signal_id or str(uuid.uuid4())
+        self.side = side
+        self.action = action
+        self.strategy_name = strategy_name
+        self.strategy_type = strategy_type
+        self.timeframe = timeframe
+        self.timestamp = timestamp or datetime.now()
+        self.expiry = expiry
+        self.position_tier = position_tier
+        self.price_hint = price_hint
+        self.meta = meta or {}
+        self.source = source
+        self.metadata = metadata
+
+        # Old-style fields (backward compatibility)
         self.entry_price = entry_price
         self.stop_price = stop_price
         self.target_price = target_price
-        self.confidence = confidence
         self.reason = reason
         self.signal_date = signal_date or date.today()
 
+    @classmethod
+    def create_id(cls) -> str:
+        """Generate a unique signal ID."""
+        return str(uuid.uuid4())
+
     def __repr__(self):
-        return f"Signal({self.ticker} @ {self.entry_price})"
+        return f"Signal({self.ticker} signal_id={self.signal_id[:8]})"
 
 
 class DataProvider:
