@@ -709,6 +709,8 @@ async def run_vbt_backtest(
 
                 ret_pct = float(row.get("Return [%]", 0.0))
                 pnl = float(row.get("PnL", 0.0))
+                entry_price_raw = float(row.get("Entry Price", 0.0))
+                exit_price_raw = float(row.get("Exit Price", 0.0))
 
                 try:
                     holding = (pd.Timestamp(exit_dt) - pd.Timestamp(entry_dt)).days
@@ -721,6 +723,12 @@ async def run_vbt_backtest(
                     "return_pct": round(ret_pct, 2),
                     "pnl": round(pnl, 2),
                     "holding_days": holding,
+                    # 記憶引擎所需 key
+                    "entry_date": entry_str,
+                    "exit_date": exit_str,
+                    "entry_price": entry_price_raw,
+                    "exit_price": exit_price_raw,
+                    "pnl_pct": round(ret_pct, 2),
                 })
 
             holding_days_arr = [t["holding_days"] for t in trades_list]

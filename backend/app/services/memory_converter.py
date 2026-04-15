@@ -135,7 +135,7 @@ def _extract_indicators(ohlcv_df: pd.DataFrame, date_val) -> dict:
             macd = ta.trend.macd(pd.Series(close), window_fast=12, window_slow=26, window_sign=9)
             if macd is not None and len(macd) > 0:
                 indicators['macd'] = float(macd.iloc[-1])
-        except:
+        except Exception:
             pass
 
         # ATR (14)
@@ -149,7 +149,7 @@ def _extract_indicators(ohlcv_df: pd.DataFrame, date_val) -> dict:
                     np.abs(low[-14:] - close[-15:-1])
                 ])
                 indicators['atr_14'] = float(np.mean(tr))
-        except:
+        except Exception:
             pass
 
         # 布林帶
@@ -159,7 +159,7 @@ def _extract_indicators(ohlcv_df: pd.DataFrame, date_val) -> dict:
                 indicators['bb_high'] = float(bb.iloc[-1, 0]) if len(bb) > 0 else None
                 indicators['bb_mid'] = float(bb.iloc[-1, 1]) if len(bb) > 0 else None
                 indicators['bb_low'] = float(bb.iloc[-1, 2]) if len(bb) > 0 else None
-        except:
+        except Exception:
             pass
 
         return indicators
