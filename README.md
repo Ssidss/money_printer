@@ -1,6 +1,6 @@
 # Money Printer — SMC 股票分析系統
 
-自動化美股 / 台股分析系統，基於 Smart Money Concepts (SMC) + 多時間框架 (MTF) 結構分析，提供分層決策與倉位管理建議。
+自動化美股 / 台股分析系統，基於 Smart Money Concepts (SMC) + 多時間框架 (MTF) 結構分析，提供分層決策與倉位管理建議。整合 KingArmy Trade Memory Engine，將每次回測結果轉化為可查詢的交易記憶。
 
 
 ## 功能特色
@@ -14,6 +14,9 @@
 - **新聞情緒** — RSS 自動抓取 + 情緒分析作為催化劑
 - **AI 分析筆記** — 儲存每次分析記錄，追蹤歷史推薦、勝率追蹤（`actual_return_pct`）
 - **VectorBT 回測** — Dashboard 內建策略回測（SMC、動量突破、爆發掃描），向量化引擎
+- **回測迭代 Pipeline** — 多輪訓練/驗證週期，自動收斂，支援即時停止
+- **Trade Memory Engine** — VBT 回測結果自動轉換為交易記憶，向量查詢勝率統計
+- **記憶儀表板** — 前端可視化記憶摘要、跨市場統計、決策表
 - **Telegram 通知** — 推送分析結果到手機
 
 ## 技術棧
@@ -21,43 +24,45 @@
 | 層級 | 技術 |
 |------|------|
 | 後端 | FastAPI + SQLAlchemy 2.0 (async) + asyncpg |
-| 資料庫 | PostgreSQL 15 |
+| 資料庫 | PostgreSQL 15（共用 `~/.kingarmy/db/`，port 54330）|
 | 前端 | Next.js 16 + TypeScript + Tailwind CSS v4 |
 | 資料源 | yfinance（美股）+ TWSE 官方 API（台股歷史數據）|
 | 回測引擎 | VectorBT（向量化，防前視偏誤）|
+| 記憶引擎 | KingArmy Trade Memory Engine（HTTP Client）|
 | Python | 3.11（建議用 conda 管理）|
 
 ## 系統架構
 
 ```
-┌─────────────────────────────────────────────────┐
-│                   Frontend                       │
-│           Next.js 16 (:3000)                     │
-│   K線圖 / SMC 標記 / 即時報價 / 持倉管理         │
-└──────────────────┬──────────────────────────────┘
-                   │ REST API
-┌──────────────────▼──────────────────────────────┐
-│                   Backend                        │
-│           FastAPI (:8000)                         │
-│                                                  │
-│  ┌─────────┐ ┌──────────┐ ┌───────────────────┐ │
-│  │ SMC     │ │ 動量分析  │ │ 新聞情緒分析      │ │
-│  │ 結構    │ │ RSI/MACD │ │ RSS + Sentiment   │ │
-│  │ OB/FVG  │ │ MA/BB    │ │                   │ │
-│  └────┬────┘ └────┬─────┘ └────────┬──────────┘ │
-│       └───────────┼────────────────┘             │
-│                   ▼                              │
-│          ┌────────────────┐                      │
-│          │  分層決策引擎   │                      │
-│          │  5 條件計數     │                      │
-│          │  綜合分 v3     │                      │
-│          └────────────────┘                      │
-└──────────────────┬──────────────────────────────┘
-                   │
-            ┌──────▼──────┐
-            │ PostgreSQL  │
-            │   15        │
-            └─────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                        Frontend                               │
+│                  Next.js 16 (:3000)                           │
+│   K線圖 / SMC / 即時報價 / 持倉 / Pipeline / 記憶儀表板      │
+└──────────────────────┬───────────────────────────────────────┘
+                       │ REST API
+┌──────────────────────▼───────────────────────────────────────┐
+│                        Backend                                │
+│                  FastAPI (:8000)                               │
+│                                                               │
+│  ┌─────────┐ ┌──────────┐ ┌───────────┐ ┌────────────────┐  │
+│  │ SMC     │ │ 動量分析  │ │ 新聞情緒  │ │ 回測 Pipeline  │  │
+│  │ 結構    │ │ RSI/MACD │ │ Sentiment │ │ VBT 多輪迭代   │  │
+│  │ OB/FVG  │ │ MA/BB    │ │           │ │ stop/cancel    │  │
+│  └────┬────┘ └────┬─────┘ └─────┬─────┘ └───────┬────────┘  │
+│       └───────────┼─────────────┘               │            │
+│                   ▼                             │            │
+│          ┌────────────────┐                     ▼            │
+│          │  分層決策引擎   │         ┌────────────────────┐   │
+│          │  5 條件計數     │         │  Memory Converter  │   │
+│          │  綜合分 v3     │         │  VBT → 記憶格式     │   │
+│          └────────────────┘         └─────────┬──────────┘   │
+└──────────────────────┬──────────────────────────┼────────────┘
+                       │                          │ HTTP
+                ┌──────▼──────┐          ┌────────▼───────────┐
+                │ PostgreSQL  │          │ Trade Memory Engine │
+                │ 15 (:54330) │          │ KingArmy (:8001)    │
+                │ ~/.kingarmy │          │ 向量查詢 + 決策表    │
+                └─────────────┘          └────────────────────┘
 ```
 
 ## 分析策略
@@ -100,7 +105,7 @@ Layer 5: MTF 對齊
 - Node.js 20+
 - Conda（建議）或 venv
 
-> **不需要手動安裝 PostgreSQL。** 系統預設會自動啟動內建的 PostgreSQL（資料存放於 `~/.money_printer/pgdata`）。如需連接外部資料庫，請見「進階設定」。
+> **不需要手動安裝 PostgreSQL。** 系統預設會自動啟動內建的 PostgreSQL（資料存放於 `~/.kingarmy/db/`，port 54330，與 KingArmy Trade Memory Engine 共用）。如需連接外部資料庫，請見「進階設定」。
 
 ### 2. Clone 專案
 
@@ -177,7 +182,7 @@ SECRET_KEY=your-secret-key
 ENVIRONMENT=production
 ```
 
-> **AUTO_DB 邏輯**：當 `DB_HOST=localhost`、`DB_USER=postgres`、`DB_PASSWORD=`（空）時，系統自動啟動內建 PostgreSQL。設定外部 DB 後即停用 AUTO_DB。
+> **AUTO_DB 邏輯**：當 `DB_HOST` 為空或未設定時，系統自動啟動內建 PostgreSQL（`~/.kingarmy/db/`，port 54330）。設定外部 `DB_HOST` 後即停用 AUTO_DB。
 
 ## 操作指南
 
@@ -282,6 +287,10 @@ K 線圖上會自動標記：
 | `/api/v1/ai-notes/{ticker}` | GET | 查看 AI 筆記（含勝率追蹤）|
 | `/api/v1/backtest/vbt/run` | POST | 執行 VectorBT 策略回測 |
 | `/api/v1/backtest/vbt/strategies` | GET | 查詢可用回測策略清單 |
+| `/api/v1/pipeline/run` | POST | 啟動回測迭代 Pipeline |
+| `/api/v1/pipeline/status` | GET | 查詢 Pipeline 執行狀態 |
+| `/api/v1/pipeline/report` | GET | 取得 Pipeline 驗證報告 |
+| `/api/v1/pipeline/stop` | POST | 停止執行中的 Pipeline |
 
 ## 自訂股票清單
 
