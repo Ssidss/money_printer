@@ -1,310 +1,190 @@
-# Money Printer v2 — SMC 股票分析系統
+# Money Printer
 
-自動化美股 / 台股分析系統，基於 Smart Money Concepts (SMC) + 多時間框架 (MTF) 結構分析，提供分層決策與倉位管理建議。
+[English version](README.en.md)
 
-## 功能特色
+美股 / 台股股票研究平台，整合 SMC 結構分析、動量確認、風報比規劃、投資組合健檢、策略信號與 AI 分析筆記。
 
-- **SMC 結構分析** — Order Block、Fair Value Gap、市場結構自動辨識
-- **多時間框架 (MTF)** — 日線 / 週線 / 月線趨勢對齊，高時間框架否決權
-- **分層決策引擎** — 5 條件計數（SMC + 動量 + 催化劑 + R:R + MTF），決定推薦等級
-- **綜合分 v3** — 條件分(0\~50) + 風報比分(0\~30) + 位置分(0\~20) = 真實交易品質
-- **即時報價** — 手動觸發 yfinance 盤中報價
-- **持倉管理** — 買入 / 賣出 / 損益追蹤 / 自動停損停利
-- **新聞情緒** — RSS 自動抓取 + 情緒分析作為催化劑
-- **AI 分析筆記** — 儲存每次分析記錄，追蹤歷史推薦
-- **Telegram 通知** — 推送分析結果到手機
+> 工程與交易研究專案，不構成投資建議。
 
-## 技術棧
+## 專案概述
 
-| 層級 | 技術 |
-|------|------|
-| 後端 | FastAPI + SQLAlchemy 2.0 (async) + asyncpg |
-| 資料庫 | PostgreSQL 15 |
-| 前端 | Next.js 16 + TypeScript + Tailwind CSS v4 |
-| 資料源 | yfinance（美股 + 台股）|
-| Python | 3.11（建議用 conda 管理）|
+Money Printer 把原本偏人工判斷的交易研究流程，整理成一套可執行、可追蹤、可被 AI agent 使用的 full-stack 系統。系統會更新股價資料、分析市場結構與動量，產生 entry / stop / target / R:R，並允許 AI 將分析結論寫回資料庫形成歷史紀錄。
+
+這個專案的重點不是單一 dashboard，而是完整資料流：
+
+```text
+股價 / 新聞資料 -> 分析引擎 -> 推薦與風控計畫 -> 前端決策介面 -> AI notes 寫回
+```
+
+## 核心能力
+
+- **跨市場掃描**：同時追蹤美股與台股，依綜合分、SMC 趨勢、RSI、推薦等級與策略信號排序。
+- **SMC 進出場計畫**：將 Order Block、FVG、swing structure、趨勢狀態轉成 entry / stop / target / R:R。
+- **分層決策引擎**：結合 SMC 方向、動量、新聞情緒、風報比與多時間框架，輸出推薦等級與倉位層級。
+- **投資組合健檢**：將持倉與每日推薦分開建模，用最新價與結構變化做 post-entry risk review。
+- **多策略信號**：支援 SMC v2、Explosion、Momentum 等策略 profile，而不是把邏輯寫死在 UI。
+- **AI 分析閉環**：AI agent 可讀取系統 API、產生 Markdown 分析，並透過 `ai-notes` API 寫回系統。
+
+## 技術亮點
+
+| 領域 | 實作 |
+|---|---|
+| Full-stack | Next.js 16, React 19, FastAPI, PostgreSQL |
+| Async backend | SQLAlchemy 2.0 async, asyncpg |
+| Market data | yfinance 歷史股價與最新價格更新 |
+| Strategy logic | SMC, MTF, RSI, MACD, MA, volume, Bollinger Bands, sentiment |
+| Risk controls | Entry, stop, target, R:R, position tier, no-long rule |
+| AI workflow | REST APIs, persisted AI analysis notes, agent-facing analysis workflow |
+| Product surface | Dashboard, scanner, stock detail, briefing, portfolio, strategies |
+
+## 產品畫面
+
+### Dashboard
+
+![Dashboard](docs/assets/screenshots/dashboard.png)
+
+每日分析入口，顯示最新分析日期、追蹤股票數、市場覆蓋範圍與 Top recommendations。使用者不需要逐檔打開股票，系統會在資料更新後自動整理候選名單。
+
+### Cross-Market Scanner
+
+![Stocks](docs/assets/screenshots/stocks.png)
+
+股票掃描頁整合最新價、綜合分、RSI、SMC 趨勢、推薦等級、建議操作、進出場計畫、策略信號與 AI note 狀態，是主要的比較與篩選介面。
+
+### Stock Detail
+
+![Stock detail](docs/assets/screenshots/stock-detail.png)
+
+個股頁展示結構化交易計畫：SMC 狀態、買入價、停損價、目標價、風報比與倉位等級。這頁呈現的是「主觀看圖策略如何被工程化」。
+
+### Briefing
+
+![Briefing](docs/assets/screenshots/briefing.png)
+
+開盤簡報整合推薦標的、持倉警報、最新分析與 AI note context，定位是盤前 workflow surface，而不是靜態資訊頁。
+
+### Strategies
+
+![Strategies](docs/assets/screenshots/strategies.png)
+
+策略頁展示回測與策略評估流程，用來比較不同策略 profile 的結果與信號品質。這讓推薦邏輯可以被驗證，而不是只停留在即時掃描結果。
 
 ## 系統架構
 
-```
-┌─────────────────────────────────────────────────┐
-│                   Frontend                       │
-│           Next.js 16 (:3000)                     │
-│   K線圖 / SMC 標記 / 即時報價 / 持倉管理         │
-└──────────────────┬──────────────────────────────┘
-                   │ REST API
-┌──────────────────▼──────────────────────────────┐
-│                   Backend                        │
-│           FastAPI (:8000)                         │
-│                                                  │
-│  ┌─────────┐ ┌──────────┐ ┌───────────────────┐ │
-│  │ SMC     │ │ 動量分析  │ │ 新聞情緒分析      │ │
-│  │ 結構    │ │ RSI/MACD │ │ RSS + Sentiment   │ │
-│  │ OB/FVG  │ │ MA/BB    │ │                   │ │
-│  └────┬────┘ └────┬─────┘ └────────┬──────────┘ │
-│       └───────────┼────────────────┘             │
-│                   ▼                              │
-│          ┌────────────────┐                      │
-│          │  分層決策引擎   │                      │
-│          │  5 條件計數     │                      │
-│          │  綜合分 v3     │                      │
-│          └────────────────┘                      │
-└──────────────────┬──────────────────────────────┘
-                   │
-            ┌──────▼──────┐
-            │ PostgreSQL  │
-            │   15        │
-            └─────────────┘
+```mermaid
+flowchart LR
+  UI["Next.js UI"] --> API["FastAPI API"]
+  API --> DB["PostgreSQL"]
+  API --> Price["Price Fetcher / yfinance"]
+  API --> News["News Crawler"]
+  API --> Engine["Decision Engine"]
+
+  Engine --> SMC["SMC + MTF Structure"]
+  Engine --> Momentum["Momentum Indicators"]
+  Engine --> Sentiment["News Sentiment"]
+  Engine --> Risk["Entry / Stop / Target / R:R"]
+
+  Agent["AI Agent"] --> API
+  Agent --> Notes["AI Notes API"]
+  Notes --> DB
 ```
 
-## 分析策略
+## 分層決策模型
 
-```
-Layer 0: MTF 多時間框架（門檻）
-  三重下降 / 逆勢反彈 → 直接排除
+```text
+Layer 0: Multi-timeframe structure
+  高時間框架衝突 / 三重弱勢 -> 排除或降級
 
-Layer 1: SMC 日線結構（方向）
-  上升結構 → 通過
-  盤整     → 降級
-  下降結構 → 排除（高時間框架上升則觀察）
+Layer 1: SMC direction gate
+  上升 -> 可交易
+  盤整 -> 降級
+  下降 -> 不做多
 
-Layer 2: 動量確認
-  MACD 30% + MA 25% + RSI 20% + Vol 15% + BB 10%
+Layer 2: Momentum confirmation
+  MACD 30% + MA 25% + RSI 20% + Volume 15% + Bollinger Bands 10%
 
-Layer 3: 催化劑（新聞情緒）
-  正面(≥65) → +1 條件
-  負面(≤35) → -1 條件
+Layer 3: Catalyst
+  正面新聞 -> 信心升級
+  中性新聞 -> 不影響
+  負面新聞 -> 警告或降級
 
-Layer 4: R:R 風報比
-  ≥ 2.0 → +1 條件
+Layer 4: Risk/reward
+  R:R >= 2.0 才視為高品質 setup
 
-Layer 5: MTF 對齊
-  高信心 + 正面 → +1 條件
-
-條件計數 → 推薦等級：
-  5 條件 → 強力推薦 / 核心持倉 (15-20%)
-  4 條件 → 強力推薦 / 核心持倉
-  3 條件 → 推薦 / 標準倉位 (8-12%)
-  2 條件 → 觀察 / 探索倉位 (3-5%)
-  < 2    → 不推薦
+Layer 5: Position tier
+  核心 15-20%, 標準 8-12%, 探索 3-5%
 ```
 
-## 安裝指南
+## AI-Assisted Engineering
 
-### 1. 前置需求
+這個專案展示的是 AI-assisted software development 的工程流程，而不是一次性 code generation。
 
-- Python 3.11+
-- Node.js 20+
-- PostgreSQL 15+
-- Conda（建議）或 venv
+### AI 的使用方式
 
-### 2. Clone 專案
+- 生成與迭代 FastAPI routers、SQLAlchemy models、Next.js pages、React components、TypeScript API client。
+- 將重複分析流程整理成可被 AI agent 執行的 API workflow。
+- 協助定位 frontend state、資料 freshness、API integration 等問題，但策略規則與系統邊界由工程設計約束。
+
+### 工程約束
+
+- 先拆清楚 product boundary：scanner、analysis engine、portfolio、strategies、AI notes 各自獨立。
+- 交易規則被拆成 deterministic layers，避免依賴 AI 生成的不透明分數。
+- Agent workflow 定義 AI 如何讀取市場 context、產生推薦、寫回分析筆記。
+- API contract 讓 AI 分析基於系統資料，而不是只停留在聊天輸出。
+
+### Engineering Decisions
+
+- **AI scoring guardrails**：加入結構優先規則，例如弱/下降結構不做多、不追高、R:R 不足降級。
+- **Hydration mismatch**：修正 auth 初始化，避免 server/client 初始 render 不一致。
+- **React effect loop**：穩定策略信號 dependencies，避免 dashboard 重複 fetch / setState。
+- **Data freshness**：分開檢查 price freshness 與 analysis freshness，避免價格已更新但分析仍過期。
+- **Portfolio separation**：持倉與每日推薦分開建模，讓系統能同時回答「買什麼」與「持倉怎麼處理」。
+
+## AI Agent API
+
+| Endpoint | Method | Purpose |
+|---|---:|---|
+| `/api/v1/analysis/latest` | GET | 最新完整分析結果 |
+| `/api/v1/analysis/top-picks` | GET | 推薦排序 |
+| `/api/v1/stocks/latest-prices` | GET | 最新價格與 freshness metadata |
+| `/api/v1/stocks/smc-trends` | GET | SMC / MTF 趨勢 |
+| `/api/v1/portfolio` | GET | 目前持倉 |
+| `/api/v1/briefing/next-open` | GET | 盤前簡報 context |
+| `/api/v1/ai-notes` | POST | 寫入 AI Markdown 分析 |
+| `/api/v1/ai-notes/latest` | GET | 每支股票最新 AI note |
+
+## Local Development
+
+Backend:
 
 ```bash
-git clone <repo-url> money_printer
-cd money_printer
-```
-
-### 3. 建立 Python 環境
-
-```bash
-# 用 conda（推薦）
-conda create -n money_printer python=3.11 -y
 conda activate money_printer
-
-# 安裝後端依賴
-pip install -r backend/requirements.txt
+python main.py --no-reload
 ```
 
-### 4. 建立資料庫
+Frontend:
 
 ```bash
-# 建立 PostgreSQL 資料庫
-createdb money_printer
-
-# 或用 psql
-psql -c "CREATE DATABASE money_printer;"
-```
-
-### 5. 環境變數
-
-在專案根目錄建立 `.env`：
-
-```env
-DATABASE_URL=postgresql+asyncpg://postgres@localhost/money_printer
-
-# （選填）Telegram 通知
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
-
-# （選填）Discord 通知
-DISCORD_WEBHOOK_URL=
-```
-
-### 6. 安裝前端依賴
-
-```bash
-cd frontend
-npm install
-cd ..
-```
-
-### 7. 啟動
-
-開兩個 terminal：
-
-```bash
-# Terminal 1: 後端
-conda activate money_printer
-python main.py
-
-# Terminal 2: 前端
 cd frontend
 npm run dev
 ```
 
-啟動後：
-- **後端 API**：http://localhost:8000
-- **API 文件**：http://localhost:8000/docs
-- **前端 UI**：http://localhost:3000
+URLs:
 
-## 操作指南
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
 
-### 初次使用
-
-啟動後系統會自動建立資料表並初始化股票清單。接下來需要手動觸發股價抓取：
+## Data Refresh
 
 ```bash
-# 抓取所有股票的歷史股價（5 年）
-curl -X POST "http://localhost:8000/api/v1/stocks/batch-fetch?days=1825"
-
-# 或只抓單支（快速測試）
-curl -X POST "http://localhost:8000/api/v1/stocks/NVDA/fetch?days=365"
-```
-
-### 執行分析
-
-```bash
-# 分析全部股票
-curl -X POST http://localhost:8000/api/v1/analysis/run
-
-# 分析單支（同步，等結果回傳）
-curl -X POST http://localhost:8000/api/v1/stocks/NVDA/analyze/sync
-
-# 取得最新分析結果
+curl -X POST "http://localhost:8000/api/v1/stocks/batch-fetch?days=21"
+curl -X POST "http://localhost:8000/api/v1/analysis/run?news_days=3"
 curl http://localhost:8000/api/v1/analysis/latest
 ```
 
-### 即時報價
+Demo dataset:
 
-```bash
-# 單支即時報價
-curl http://localhost:8000/api/v1/stocks/NVDA/realtime
-
-# 全部追蹤股票即時報價
-curl http://localhost:8000/api/v1/stocks/realtime
-```
-
-### 持倉管理
-
-```bash
-# 買入
-curl -X POST http://localhost:8000/api/v1/portfolio/buy \
-  -H "Content-Type: application/json" \
-  -d '{"ticker": "NVDA", "shares": 5, "price": 180.00}'
-
-# 賣出
-curl -X POST http://localhost:8000/api/v1/portfolio/sell \
-  -H "Content-Type: application/json" \
-  -d '{"ticker": "NVDA", "shares": 2, "price": 200.00}'
-
-# 查看持倉
-curl http://localhost:8000/api/v1/portfolio
-```
-
-### 開盤速報
-
-```bash
-# 取得開盤速報（含 MTF 分析 + 持倉健檢）
-curl http://localhost:8000/api/v1/briefing/morning
-```
-
-### 前端 UI 操作
-
-在個股頁面可以：
-- **⚡ 即時報價** — 點擊查詢盤中價格
-- **📥 更新股價** — 補齊最新日線資料
-- **📅 自訂回補** — 選擇回補 7 天 ~ 5 年的歷史股價
-- **🔄 重新分析** — 觸發分析並刷新頁面
-- **日線 / 週線 / 月線** — K 線圖切換時間框架
-- **3M / 6M / 1Y / 2Y / 5Y** — K 線圖切換顯示區間
-
-### SMC 圖表標記
-
-K 線圖上會自動標記：
-- 🟢 **Bullish OB**（綠色區域）— 機構買入區，支撐
-- 🔴 **Bearish OB**（紅色區域）— 機構賣出區，壓力
-- 🟣 **FVG**（紫色區域）— 價值缺口，市場有機率回補
-- 📍 **HH / HL / LH / LL** — 結構高低點標記
-
-## API 端點一覽
-
-| 端點 | 方法 | 說明 |
-|------|------|------|
-| `/api/v1/stocks` | GET | 所有追蹤的股票 |
-| `/api/v1/stocks/{ticker}` | GET | 單支股票資訊 |
-| `/api/v1/stocks/{ticker}/prices` | GET | 歷史股價（支援 `?timeframe=weekly`) |
-| `/api/v1/stocks/{ticker}/smc` | GET | SMC 結構分析 |
-| `/api/v1/stocks/{ticker}/realtime` | GET | 即時報價 |
-| `/api/v1/stocks/realtime` | GET | 全部即時報價 |
-| `/api/v1/stocks/smc-trends` | GET | 所有股票 MTF 趨勢 |
-| `/api/v1/stocks/{ticker}/fetch` | POST | 抓取股價 |
-| `/api/v1/stocks/{ticker}/analyze/sync` | POST | 同步分析 |
-| `/api/v1/stocks/batch-fetch` | POST | 批次抓取股價 |
-| `/api/v1/analysis/latest` | GET | 最新分析結果 |
-| `/api/v1/analysis/run` | POST | 執行全部分析 |
-| `/api/v1/portfolio` | GET | 查看持倉 |
-| `/api/v1/portfolio/buy` | POST | 買入 |
-| `/api/v1/portfolio/sell` | POST | 賣出 |
-| `/api/v1/briefing/morning` | GET | 開盤速報 |
-| `/api/v1/ai-notes` | POST | 儲存 AI 分析筆記 |
-| `/api/v1/ai-notes/{ticker}` | GET | 查看 AI 筆記 |
-
-## 自訂股票清單
-
-編輯 `backend/app/config.py` 中的 `US_STOCKS` 和 `TW_STOCKS`：
-
-```python
-US_STOCKS: list[str] = [
-    "AAPL", "NVDA", "TSLA",  # 加入你想追蹤的
-]
-TW_STOCKS: list[str] = [
-    "2330", "2454",  # 台股用代號
-]
-```
-
-重啟後端即可生效。
-
-## 綜合分解讀
-
-| 分數 | 等級 | 倉位 | 含義 |
-|------|------|------|------|
-| 80-100 | 強力推薦 | 核心 15-20% | 條件全中，極佳機會 |
-| 60-79 | 推薦 | 標準 8-12% | 條件 + R:R 不錯 |
-| 40-59 | 觀察 | 探索 3-5% | 部分條件缺失 |
-| 20-39 | 不推薦 | 不碰 | 結構不對或 R:R 太差 |
-| 0-19 | 危險 | 快跑 | 三重下降 / 已破停損 |
-
-## 每日操作流程
-
-```
-1. 盤前：跑一次 /analysis/run 更新全部分析
-2. 看綜合分排名，找推薦 + 標準倉位以上的股票
-3. 用即時報價確認現價是否接近買入區
-4. 碰到關鍵價位才操作，沒碰到就不動
-5. 每週跑一次完整 MTF 分析確認大趨勢
-```
-
-## License
-
-Private — 僅供內部使用
+- Tracks 68 US and Taiwan equities.
+- Supports daily price refresh and analysis updates.
+- Screenshots are representative demo captures, not investment recommendations.

@@ -30,12 +30,7 @@ export function StrategySignalsSummary() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // If V3 is active, use V3 signals directly
-    if (v3.active) {
-      setSignals(v3.signals)
-      setLoading(v3.loading)
-      return
-    }
+    if (v3.active) return
 
     let cancelled = false
 
@@ -75,16 +70,19 @@ export function StrategySignalsSummary() {
 
     load()
     return () => { cancelled = true }
-  }, [selectedStrategies, v3.active, v3.signals, v3.loading])
+  }, [selectedStrategies, v3.active])
+
+  const displayedSignals = v3.active ? v3.signals : signals
+  const displayedLoading = v3.active ? v3.loading : loading
 
   // Only show buy signals, sorted by confidence desc
   const buySignals = useMemo(() => {
-    return signals
+    return displayedSignals
       .filter(s => s.action === "buy")
       .sort((a, b) => b.confidence - a.confidence)
-  }, [signals])
+  }, [displayedSignals])
 
-  if (loading) {
+  if (displayedLoading) {
     return (
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="text-sm font-semibold text-slate-700 mb-3">策略信號</h3>

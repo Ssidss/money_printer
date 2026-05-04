@@ -59,20 +59,25 @@ type UseBatchSignalsOptions = {
 export function useBatchSignals(options?: UseBatchSignalsOptions) {
   const [signalMap, setSignalMap] = useState<SignalMap>({})
   const [loading, setLoading] = useState(true)
-  const strategyKey = (options?.strategies ?? []).join(",")
-  const marketKey = (options?.markets ?? []).join(",")
+  const strategyKey = options?.strategies?.join(",")
+  const marketKey = options?.markets?.join(",")
+  const strategies = useMemo(
+    () => strategyKey === undefined
+      ? ["explosion_scanner", "momentum_breakout"]
+      : strategyKey.split(",").filter(Boolean),
+    [strategyKey],
+  )
+  const markets = useMemo(
+    () => marketKey === undefined
+      ? ["US", "TW"]
+      : marketKey.split(",").filter(Boolean) as Array<"US" | "TW" | "ALL">,
+    [marketKey],
+  )
 
   useEffect(() => {
     let cancelled = false
 
     async function load() {
-      const strategies = options?.strategies !== undefined
-        ? options.strategies
-        : ["explosion_scanner", "momentum_breakout"]
-      const markets = options?.markets !== undefined
-        ? options.markets
-        : ["US", "TW"]
-
       try {
         setLoading(true)
         const results = await Promise.allSettled(
@@ -105,7 +110,7 @@ export function useBatchSignals(options?: UseBatchSignalsOptions) {
 
     load()
     return () => { cancelled = true }
-  }, [strategyKey, marketKey, options?.strategies, options?.markets])
+  }, [strategies, markets])
 
   return { signalMap, loading }
 }
